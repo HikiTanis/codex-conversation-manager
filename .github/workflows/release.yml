@@ -1,0 +1,43 @@
+name: Publish release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Fetch verified cct dependency
+        shell: powershell
+        run: .\Get-Cct.ps1
+
+      - name: Build, test, and package
+        shell: powershell
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          .\package.ps1 -Version $version
+
+      - name: Create GitHub release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = @(Get-ChildItem release -Filter '*.zip' -File)
+          if ($zip.Count -ne 1) { throw "Expected one release ZIP, found $($zip.Count)." }
+          $sums = Resolve-Path 'release\SHA256SUMS.txt'
+          gh release create $env:GITHUB_REF_NAME $zip[0].FullName $sums.Path --verify-tag --generate-notes --title "Codex Conversation Migrator $env:GITHUB_REF_NAME"

@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest a focused improvement.
+title: '[Feature] '
+labels: ['enhancement']
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow is difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Data and safety implications
+      description: Note any effect on backup compatibility, local files, index data, or deletion.
+    validations:
+      required: true

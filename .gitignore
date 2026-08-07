@@ -1,0 +1,22 @@
+# Visual Studio / .NET
+.vs/
+**/bin/
+**/obj/
+*.user
+*.suo
+*.nupkg
+
+# Local test and packaging output
+artifacts/
+release/*
+!release/.gitkeep
+
+# Downloaded third-party executable (fetched and hash-verified by Get-Cct.ps1)
+third_party/cct/cct.exe
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/

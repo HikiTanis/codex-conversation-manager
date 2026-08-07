@@ -1,0 +1,1479 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.IO.Compression;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Web.Script.Serialization;
+using System.Windows;
+using System.Windows.Interop;
+using System.Windows.Markup;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+
+namespace CodexConversationMigrator;
+
+internal static class Program
+{
+	[STAThread]
+	private static int Main(string[] args)
+	{
+		string preferred = string.Empty;
+		string report = string.Empty;
+		string text = string.Empty;
+		string language = string.Empty;
+		string output = string.Empty;
+		string text2 = string.Empty;
+		string text3 = string.Empty;
+		bool flag = false;
+		for (int i = 0; i < args.Length; i++)
+		{
+			if (string.Equals(args[i], "--self-test", StringComparison.OrdinalIgnoreCase))
+			{
+				flag = true;
+			}
+			else if (string.Equals(args[i], "--cct", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+			{
+				preferred = args[++i];
+			}
+			else if (string.Equals(args[i], "--report", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+			{
+				report = args[++i];
+			}
+			else if (string.Equals(args[i], "--bundle-test", StringComparison.OrdinalIgnoreCase) && i + 2 < args.Length)
+			{
+				text = args[++i];
+				output = args[++i];
+			}
+			else if (string.Equals(args[i], "--render-test", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+			{
+				text2 = args[++i];
+			}
+			else if (string.Equals(args[i], "--chrome-test", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+			{
+				text3 = args[++i];
+			}
+			else if ((string.Equals(args[i], "--language", StringComparison.OrdinalIgnoreCase) || string.Equals(args[i], "--lang", StringComparison.OrdinalIgnoreCase)) && i + 1 < args.Length)
+			{
+				language = args[++i];
+			}
+		}
+		string text4 = CctRunner.ResolveCctPath(preferred);
+		UiLanguage.Initialize(language);
+		if (flag)
+		{
+			return RunSelfTest(text4, report);
+		}
+		if (!string.IsNullOrWhiteSpace(text))
+		{
+			return RunBundleTest(text4, text, output);
+		}
+		if (!string.IsNullOrWhiteSpace(text2))
+		{
+			if (Path.GetFileNameWithoutExtension(text2).IndexOf("dialog-theme", StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				return RunDialogThemeRenderTest(text2);
+			}
+			return RunRenderTest(text4, text2);
+		}
+		if (!string.IsNullOrWhiteSpace(text3))
+		{
+			return RunChromeTest(text4, text3);
+		}
+		try
+		{
+			Application application = new Application();
+			application.ShutdownMode = ShutdownMode.OnMainWindowClose;
+			Application application2 = application;
+			MainWindowController mainWindowController = new MainWindowController(text4);
+			application2.MainWindow = mainWindowController.Window;
+			return application2.Run(mainWindowController.Window);
+		}
+		catch (Exception ex)
+		{
+			string text5 = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexConversationMigrator-startup-error.txt");
+			try
+			{
+				File.WriteAllText(text5, ex.ToString(), Encoding.UTF8);
+			}
+			catch
+			{
+			}
+			MessageBox.Show(UiLanguage.T("窗口启动失败：\n\n" + ex.Message + "\n\n诊断日志：" + text5), UiLanguage.T("Codex 对话迁移助手"), MessageBoxButton.OK, MessageBoxImage.Hand);
+			return 2;
+		}
+	}
+
+	private static int RunBundleTest(string cct, string threadId, string output)
+	{
+		try
+		{
+			if (string.IsNullOrWhiteSpace(cct))
+			{
+				throw new FileNotFoundException("cct.exe not found");
+			}
+			CctResult cctResult = CctRunner.Run(cct, new string[3] { "list", "--json", "--include-archived" }, null);
+			if (cctResult.ExitCode != 0)
+			{
+				throw new InvalidOperationException(CctRunner.FirstUseful(cctResult));
+			}
+			List<SessionInfo> cctSessions = CctRunner.ParseSessions(cctResult.StdOut);
+			CatalogResult catalogResult = CodexCatalog.Build(cctSessions);
+			SessionInfo sessionInfo = catalogResult.Projects.SelectMany((ProjectGroup x) => x.Sessions).FirstOrDefault((SessionInfo x) => string.Equals(x.ThreadId, threadId, StringComparison.OrdinalIgnoreCase));
+			if (sessionInfo == null)
+			{
+				throw new InvalidOperationException("thread not found: " + threadId);
+			}
+			ExactBundleWriter.CreateSingleSessionBundle(sessionInfo, output);
+			return 0;
+		}
+		catch
+		{
+			return 1;
+		}
+	}
+
+	private static int RunChromeTest(string cct, string output)
+	{
+		try
+		{
+			Application application = new Application();
+			application.ShutdownMode = ShutdownMode.OnMainWindowClose;
+			Application application2 = application;
+			MainWindowController controller = new MainWindowController(cct);
+			application2.MainWindow = controller.Window;
+			bool tested = false;
+			controller.Window.ContentRendered += delegate
+			{
+				if (!tested)
+				{
+					tested = true;
+					IntPtr handle = new WindowInteropHelper(controller.Window).Handle;
+					File.WriteAllText(output, ChromeVerifier.Verify(handle), Encoding.UTF8);
+					controller.Window.Close();
+				}
+			};
+			return application2.Run(controller.Window);
+		}
+		catch (Exception ex)
+		{
+			try
+			{
+				File.WriteAllText(output + ".error.txt", ex.ToString(), Encoding.UTF8);
+			}
+			catch
+			{
+			}
+			return 1;
+		}
+	}
+
+	private static int RunDialogThemeRenderTest(string output)
+	{
+		try
+		{
+			Application application = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
+			Window preview = DialogUi.CreateThemePreviewForTest();
+			application.MainWindow = preview;
+			bool captured = false;
+			preview.ContentRendered += async delegate
+			{
+				if (captured) return;
+				captured = true;
+				System.Windows.Controls.ComboBox previewCombo = preview.Tag as System.Windows.Controls.ComboBox;
+				if (previewCombo != null)
+				{
+					previewCombo.IsDropDownOpen = true;
+				}
+				await Task.Delay(350);
+				preview.UpdateLayout();
+				if (!(preview.Content is FrameworkElement visual))
+				{
+					throw new InvalidOperationException("dialog preview content unavailable");
+				}
+				int width = Math.Max(1, (int)Math.Ceiling(visual.ActualWidth));
+				int height = Math.Max(1, (int)Math.Ceiling(visual.ActualHeight));
+				RenderTargetBitmap bitmap = new RenderTargetBitmap(width, height, 96.0, 96.0, PixelFormats.Pbgra32);
+				bitmap.Render(visual);
+				BitmapSource finalBitmap = bitmap;
+				System.Windows.Controls.Primitives.Popup popup = previewCombo?.Template.FindName("PART_Popup", previewCombo) as System.Windows.Controls.Primitives.Popup;
+				if (popup?.Child is FrameworkElement popupVisual && popupVisual.ActualWidth > 0.0 && popupVisual.ActualHeight > 0.0)
+				{
+					int popupWidth = Math.Max(1, (int)Math.Ceiling(popupVisual.ActualWidth));
+					int popupHeight = Math.Max(1, (int)Math.Ceiling(popupVisual.ActualHeight));
+					RenderTargetBitmap popupBitmap = new RenderTargetBitmap(popupWidth, popupHeight, 96.0, 96.0, PixelFormats.Pbgra32);
+					popupBitmap.Render(popupVisual);
+					Point popupOffset = visual.PointFromScreen(popupVisual.PointToScreen(new Point(0.0, 0.0)));
+					int combinedWidth = Math.Max(width, (int)Math.Ceiling(popupOffset.X + popupVisual.ActualWidth));
+					int combinedHeight = Math.Max(height, (int)Math.Ceiling(popupOffset.Y + popupVisual.ActualHeight));
+					DrawingVisual composed = new DrawingVisual();
+					using (DrawingContext drawing = composed.RenderOpen())
+					{
+						drawing.DrawImage(bitmap, new Rect(0.0, 0.0, width, height));
+						drawing.DrawImage(popupBitmap, new Rect(popupOffset.X, popupOffset.Y, popupVisual.ActualWidth, popupVisual.ActualHeight));
+					}
+					RenderTargetBitmap combined = new RenderTargetBitmap(combinedWidth, combinedHeight, 96.0, 96.0, PixelFormats.Pbgra32);
+					combined.Render(composed);
+					finalBitmap = combined;
+				}
+				PngBitmapEncoder encoder = new PngBitmapEncoder
+				{
+					Frames = { BitmapFrame.Create(finalBitmap) }
+				};
+				using (FileStream stream = new FileStream(output, FileMode.Create, FileAccess.Write, FileShare.None))
+				{
+					encoder.Save(stream);
+				}
+				preview.Close();
+			};
+			return application.Run(preview);
+		}
+		catch (Exception ex)
+		{
+			try
+			{
+				File.WriteAllText(output + ".error.txt", ex.ToString(), Encoding.UTF8);
+			}
+			catch
+			{
+			}
+			return 1;
+		}
+	}
+
+	private static int RunRenderTest(string cct, string output)
+	{
+		try
+		{
+			Application application = new Application();
+			application.DispatcherUnhandledException += delegate(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs eventArgs)
+			{
+				try
+				{
+					File.WriteAllText(output + ".error.txt", eventArgs.Exception.ToString(), Encoding.UTF8);
+				}
+				catch
+				{
+				}
+				eventArgs.Handled = true;
+				application.Shutdown(1);
+			};
+			application.ShutdownMode = ShutdownMode.OnMainWindowClose;
+			Application application2 = application;
+			MainWindowController controller = new MainWindowController(cct);
+			application2.MainWindow = controller.Window;
+			bool captured = false;
+			controller.Window.ContentRendered += async delegate
+			{
+				if (!captured)
+				{
+					captured = true;
+					await controller.InitialLoadTask;
+					string renderName = Path.GetFileNameWithoutExtension(output).ToLowerInvariant();
+					if (renderName.Contains("user-size"))
+					{
+						controller.Window.WindowState = WindowState.Normal;
+						controller.Window.Width = 931.0;
+						controller.Window.Height = 639.0;
+					}
+					else if (renderName.Contains("compact"))
+					{
+						controller.Window.WindowState = WindowState.Normal;
+						controller.Window.Width = 900.0;
+						controller.Window.Height = 620.0;
+					}
+					if (renderName.Contains("import"))
+					{
+						if (renderName.Contains("progress"))
+						{
+							controller.ShowImportProgressForTest();
+						}
+						else
+						{
+							controller.ShowImportForTest();
+						}
+						if (renderName.Contains("project"))
+						{
+							controller.ShowProjectRestoreForTest();
+						}
+						if (!controller.TestImportModeHelpForTest())
+						{
+							throw new InvalidOperationException("import mode help did not follow the selected conflict mode");
+						}
+					}
+					else if (renderName.Contains("preview"))
+					{
+						bool previewOpened = renderName.Contains("subagent") ? await controller.ShowFirstSubagentConversationForTest(string.Empty) : await controller.ShowFirstConversationForTest(string.Empty);
+						if (!previewOpened)
+						{
+							throw new InvalidOperationException("conversation preview did not open");
+						}
+						if (renderName.Contains("max") && !controller.MaximizeConversationForTest())
+						{
+							throw new InvalidOperationException("conversation preview did not maximize");
+						}
+						if (renderName.Contains("resize") && !controller.ResizeConversationDialogForTest())
+						{
+							throw new InvalidOperationException("conversation preview resize handles did not resize the dialog");
+						}
+					}
+					else if (renderName.Contains("subagent"))
+					{
+						if (!controller.ShowSubagentViewForTest(string.Empty))
+						{
+							throw new InvalidOperationException("subagent view did not separate linked child conversations");
+						}
+						if (renderName.Contains("selection") && !controller.TestSubagentSelectionToggleForTest())
+						{
+							throw new InvalidOperationException("subagent all/select-none/selected-delete interaction failed");
+						}
+						if (!(await controller.WaitForSelectedProjectStorageForTest()))
+						{
+							throw new InvalidOperationException("project storage metrics did not complete");
+						}
+					}
+					else if (renderName.Contains("main-selection"))
+					{
+						if (!controller.ShowMainSessionViewForTest(string.Empty))
+						{
+							throw new InvalidOperationException("main session view did not show project conversations");
+						}
+						if (!controller.TestMainSelectionToggleForTest())
+						{
+							throw new InvalidOperationException("main all/select-none/selected-delete interaction failed");
+						}
+						if (!(await controller.WaitForSelectedProjectStorageForTest()))
+						{
+							throw new InvalidOperationException("project storage metrics did not complete");
+						}
+					}
+					else if (renderName.Contains("conversation-backup"))
+					{
+						if (!controller.SelectConversationBackupForTest(string.Empty))
+						{
+							throw new InvalidOperationException("conversation backup mode did not select a conversation");
+						}
+					}
+					else if (!controller.SelectProjectBackupForTest(string.Empty))
+					{
+						throw new InvalidOperationException("project backup mode did not select a project");
+					}
+					else if (!(await controller.WaitForSelectedProjectStorageForTest()))
+					{
+						throw new InvalidOperationException("project storage metrics did not complete");
+					}
+					await Task.Delay(350);
+					controller.Window.UpdateLayout();
+					if (renderName.Contains("import") && !controller.TestImportLayoutForTest())
+					{
+						throw new InvalidOperationException("import action buttons are clipped or the project conflict field is using the native template");
+					}
+					if (!(controller.Window.Content is FrameworkElement visual))
+					{
+						throw new InvalidOperationException("window content unavailable");
+					}
+					int width = Math.Max(1, (int)Math.Ceiling(visual.ActualWidth));
+					int height = Math.Max(1, (int)Math.Ceiling(visual.ActualHeight));
+					RenderTargetBitmap bitmap = new RenderTargetBitmap(width, height, 96.0, 96.0, PixelFormats.Pbgra32);
+					bitmap.Render(visual);
+					PngBitmapEncoder encoder = new PngBitmapEncoder
+					{
+						Frames = { BitmapFrame.Create(bitmap) }
+					};
+					using (FileStream stream = new FileStream(output, FileMode.Create, FileAccess.Write, FileShare.None))
+					{
+						encoder.Save(stream);
+					}
+					controller.Window.Close();
+				}
+			};
+			return application2.Run(controller.Window);
+		}
+		catch (Exception ex)
+		{
+			try
+			{
+				File.WriteAllText(output + ".error.txt", ex.ToString(), Encoding.UTF8);
+			}
+			catch
+			{
+			}
+			return 1;
+		}
+	}
+
+	private static string RunFeatureSafetyTest(string cct)
+	{
+		string environmentVariable = Environment.GetEnvironmentVariable("CODEX_HOME");
+		string text = Path.Combine(Path.GetTempPath(), "codex-migrator-feature-test-" + Guid.NewGuid().ToString("N"));
+		string projectDeleteTest = Path.Combine(Path.GetTempPath(), "codex-migrator-project-delete-test-" + Guid.NewGuid().ToString("N"));
+		string projectPayloadTest = Path.Combine(Path.GetTempPath(), "codex-migrator-project-payload-test-" + Guid.NewGuid().ToString("N"));
+		try
+		{
+			Environment.SetEnvironmentVariable("CODEX_HOME", text);
+			string text2 = Path.Combine(text, "sessions", "2026", "01", "02");
+			Directory.CreateDirectory(text2);
+			string testThreadId = "11111111-1111-4111-8111-111111111111";
+			string text3 = Path.Combine(text2, "rollout-2026-01-02T03-04-05-" + testThreadId + ".jsonl");
+			JavaScriptSerializer javaScriptSerializer = CctRunner.NewSerializer();
+			Dictionary<string, object> dictionary = new Dictionary<string, object>();
+			dictionary.Add("timestamp", "2026-01-02T03:04:05Z");
+			dictionary.Add("type", "session_meta");
+			dictionary.Add("payload", new Dictionary<string, object>
+			{
+				{ "id", testThreadId },
+				{ "timestamp", "2026-01-02T03:04:05Z" },
+				{ "cwd", "C:\\fake-project" },
+				{ "originator", "codex_cli_rs" },
+				{ "cli_version", "test" },
+				{ "source", "cli" },
+				{ "model_provider", "openai" }
+			});
+			Dictionary<string, object> obj = dictionary;
+			Dictionary<string, object> dictionary2 = new Dictionary<string, object>();
+			dictionary2.Add("timestamp", "2026-01-02T03:04:05Z");
+			dictionary2.Add("type", "response_item");
+			dictionary2.Add("payload", new Dictionary<string, object>
+			{
+				{ "type", "message" },
+				{ "role", "user" },
+				{
+					"content",
+					new object[1]
+					{
+						new Dictionary<string, object>
+						{
+							{ "type", "input_text" },
+							{ "text", "<environment_context><cwd>C:\\\\old</cwd></environment_context>\n真正的问题" }
+						}
+					}
+				}
+			});
+			Dictionary<string, object> obj2 = dictionary2;
+			Dictionary<string, object> dictionary3 = new Dictionary<string, object>();
+			dictionary3.Add("timestamp", "2026-01-02T03:05:06Z");
+			dictionary3.Add("type", "response_item");
+			dictionary3.Add("payload", new Dictionary<string, object>
+			{
+				{ "type", "message" },
+				{ "role", "assistant" },
+				{
+					"content",
+					new object[1]
+					{
+						new Dictionary<string, object>
+						{
+							{ "type", "output_text" },
+							{ "text", "这是回答。" }
+						}
+					}
+				}
+			});
+			Dictionary<string, object> obj3 = dictionary3;
+			string fixtureContents = javaScriptSerializer.Serialize(obj) + Environment.NewLine + javaScriptSerializer.Serialize(obj2) + Environment.NewLine + javaScriptSerializer.Serialize(obj3) + Environment.NewLine;
+			File.WriteAllText(text3, fixtureContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			SessionInfo sessionInfo = new SessionInfo();
+			sessionInfo.ThreadId = testThreadId;
+			sessionInfo.SessionPath = text3;
+			sessionInfo.RelativePath = "2026/01/02/" + Path.GetFileName(text3);
+			sessionInfo.Title = "功能测试";
+			sessionInfo.Cwd = "C:\\fake-project";
+			sessionInfo.Preview = "真正的问题";
+			sessionInfo.Source = "cli";
+			sessionInfo.CreatedAt = "2026-01-02T03:04:05Z";
+			sessionInfo.UpdatedAt = "2026-01-02T03:05:06Z";
+			sessionInfo.UpdatedDate = new DateTime(2026, 1, 2, 3, 5, 6, DateTimeKind.Utc);
+			SessionInfo session = sessionInfo;
+			ConversationReadResult conversationReadResult = ConversationReader.Read(session);
+			if (conversationReadResult.Messages.Count != 2 || conversationReadResult.Messages[0].Text != "真正的问题" || conversationReadResult.Messages[1].Text != "这是回答。")
+			{
+				throw new InvalidOperationException("conversation preview parser test failed");
+			}
+			string text4 = string.Join(" ", MainWindowController.BuildImportConflictArguments("merge").ToArray());
+			string text5 = string.Join(" ", MainWindowController.BuildImportConflictArguments("copy").ToArray());
+			string text6 = string.Join(" ", MainWindowController.BuildImportConflictArguments("replace").ToArray());
+			if (text4 != "--merge" || text5 != "--merge" || text6 != "--merge")
+			{
+				throw new InvalidOperationException("import conflict arguments test failed");
+			}
+			if (BackupPackageFormat.ExtensionFor(includesProjectFiles: false) != ".codexchat" || BackupPackageFormat.ExtensionFor(includesProjectFiles: true) != ".codexproject" ||
+				!BackupPackageFormat.IsFormalPackage("legacy.codexpack") || !BackupPackageFormat.IsFormalPackage("chat.codexchat") || !BackupPackageFormat.IsFormalPackage("project.codexproject") ||
+				BackupPackageFormat.IsFormalPackage("raw.codexbundle") || !BackupPackageFormat.IsSupportedImport("raw.codexbundle"))
+			{
+				throw new InvalidOperationException("formal backup extension test failed");
+			}
+			List<string> samePathArguments = new List<string>();
+			bool samePathMapped = CctImportPathMapping.AddArguments(samePathArguments, @"E:\work\same-project", @"E:\work\same-project\.", out string samePathWorkDirectory);
+			if (samePathMapped || samePathArguments.Count != 0 || samePathWorkDirectory != null)
+			{
+				throw new InvalidOperationException("same-path cwd mapping was not skipped");
+			}
+			List<string> changedPathArguments = new List<string>();
+			bool changedPathMapped = CctImportPathMapping.AddArguments(changedPathArguments, @"D:\old-project", @"E:\new-project", out string changedPathWorkDirectory);
+			if (!changedPathMapped || changedPathArguments.Count != 2 || changedPathArguments[0] != "--map-cwd" || changedPathArguments[1] != @"D:\old-project=E:\new-project" || changedPathWorkDirectory != null)
+			{
+				throw new InvalidOperationException("changed-path cwd mapping test failed");
+			}
+
+			string transactionFolder = Path.Combine(text2, "cct-backup-transaction");
+			Directory.CreateDirectory(transactionFolder);
+			string rollbackActive = Path.Combine(transactionFolder, "rollout-rollback.jsonl");
+			string rollbackOriginal = "rollback-original";
+			File.WriteAllText(rollbackActive, rollbackOriginal, Encoding.UTF8);
+			CctBackupTransaction rollbackTransaction = CctBackupTransaction.Begin(text);
+			string rollbackBackup = rollbackActive + ".cct-bak-100";
+			File.Copy(rollbackActive, rollbackBackup);
+			File.WriteAllText(rollbackActive, "rollback-mutated", Encoding.UTF8);
+			CctBackupRollbackResult rollbackResult = rollbackTransaction.RollbackAndDeleteTemporaryBackups();
+			if (rollbackResult.RestoredCount != 1 || rollbackResult.DeletedCount != 1 || File.Exists(rollbackBackup) || File.ReadAllText(rollbackActive, Encoding.UTF8) != rollbackOriginal)
+			{
+				throw new InvalidOperationException("cct backup rollback-and-clean test failed");
+			}
+
+			string commitActive = Path.Combine(transactionFolder, "rollout-commit.jsonl");
+			File.WriteAllText(commitActive, "commit-original", Encoding.UTF8);
+			CctBackupTransaction commitTransaction = CctBackupTransaction.Begin(text);
+			string commitBackup = commitActive + ".cct-bak-101";
+			File.Copy(commitActive, commitBackup);
+			File.WriteAllText(commitActive, "commit-current", Encoding.UTF8);
+			int committedBackupCount = commitTransaction.CommitAndDeleteTemporaryBackups();
+			if (committedBackupCount != 1 || File.Exists(commitBackup) || File.ReadAllText(commitActive, Encoding.UTF8) != "commit-current")
+			{
+				throw new InvalidOperationException("cct backup commit-and-clean test failed");
+			}
+			File.Delete(rollbackActive);
+			File.Delete(commitActive);
+			Directory.Delete(transactionFolder);
+			string text7 = Path.Combine(text, "original.codexbundle");
+			string text8 = Path.Combine(text, "fresh.codexbundle");
+			ExactBundleWriter.CreateSingleSessionBundle(session, text7);
+			string text9 = Path.Combine(text, "compressed.codexbundle");
+			using (ZipArchive zipArchive = ZipFile.Open(text9, ZipArchiveMode.Create))
+			{
+				ZipArchiveEntry zipArchiveEntry = zipArchive.CreateEntry("manifest.json");
+				CctBundleManifest cctBundleManifest = new CctBundleManifest();
+				cctBundleManifest.format_version = "1";
+				cctBundleManifest.sessions = new List<CctBundleSession>
+				{
+					new CctBundleSession
+					{
+						thread_id = testThreadId,
+						bundle_path = "sessions/test.jsonl.zst",
+						compressed = true
+					}
+				};
+				CctBundleManifest obj4 = cctBundleManifest;
+				using StreamWriter streamWriter = new StreamWriter(zipArchiveEntry.Open(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+				streamWriter.Write(javaScriptSerializer.Serialize(obj4));
+			}
+			bool flag = false;
+			try
+			{
+				TargetedThreadIndexer.ValidateBundles(new string[1] { text9 });
+			}
+			catch (InvalidDataException ex)
+			{
+				flag = ex.Message.IndexOf(".zst", StringComparison.OrdinalIgnoreCase) >= 0;
+			}
+			if (!flag)
+			{
+				throw new InvalidOperationException("compressed bundle preflight test failed");
+			}
+			string newProject = Path.Combine(text, "new-project");
+			Directory.CreateDirectory(newProject);
+			Dictionary<string, string> dictionary4 = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+			dictionary4.Add(testThreadId, "C:\\fake-project");
+			Dictionary<string, string> indexedCwds = dictionary4;
+			HashSet<string> hashSet = BundleFreshIdRewriter.FindIndexedPathMismatches(text7, indexedCwds, newProject);
+			if (!hashSet.Contains(testThreadId))
+			{
+				throw new InvalidOperationException("indexed path mismatch was not detected");
+			}
+			FreshIdRewriteResult freshIdRewriteResult = BundleFreshIdRewriter.Rewrite(text7, text8, hashSet);
+			if (freshIdRewriteResult.RewrittenCount != 1 || !freshIdRewriteResult.IdMap.ContainsKey(testThreadId))
+			{
+				throw new InvalidOperationException("fresh ID bundle rewrite failed");
+			}
+			string text10 = freshIdRewriteResult.IdMap[testThreadId];
+			using (ZipArchive zipArchive2 = ZipFile.OpenRead(text8))
+			{
+				ZipArchiveEntry entry = zipArchive2.GetEntry("manifest.json");
+				if (entry == null)
+				{
+					throw new InvalidOperationException("rewritten manifest missing");
+				}
+				CctBundleManifest cctBundleManifest2;
+				using (StreamReader streamReader = new StreamReader(entry.Open(), Encoding.UTF8))
+				{
+					cctBundleManifest2 = javaScriptSerializer.Deserialize<CctBundleManifest>(streamReader.ReadToEnd());
+				}
+				CctBundleSession cctBundleSession = cctBundleManifest2.sessions.Single();
+				if (cctBundleSession.thread_id != text10 || cctBundleSession.origin_thread_id != testThreadId || cctBundleSession.bundle_path.IndexOf(text10, StringComparison.OrdinalIgnoreCase) < 0)
+				{
+					throw new InvalidOperationException("rewritten manifest still uses old thread ID");
+				}
+				ZipArchiveEntry entry2 = zipArchive2.GetEntry(cctBundleSession.bundle_path);
+				if (entry2 == null)
+				{
+					throw new InvalidOperationException("rewritten session entry missing");
+				}
+				using StreamReader streamReader2 = new StreamReader(entry2.Open(), Encoding.UTF8);
+				string text11 = streamReader2.ReadToEnd();
+				if (text11.IndexOf("\"id\":\"" + text10 + "\"", StringComparison.Ordinal) < 0 || text11.IndexOf("真正的问题", StringComparison.Ordinal) < 0)
+				{
+					throw new InvalidOperationException("rewritten session metadata or content is invalid");
+				}
+				if (text11.IndexOf("\"" + ConversationLineage.OriginThreadIdKey + "\":\"" + testThreadId + "\"", StringComparison.Ordinal) < 0)
+				{
+					throw new InvalidOperationException("rewritten session did not retain the immutable origin Thread ID");
+				}
+			}
+			ConversationLineageSelfTest.Run(Path.Combine(text, "lineage-selftest"));
+			CctResult cctResult = CctRunner.Run(cct, new string[5]
+			{
+				"import",
+				text8,
+				"--map-cwd",
+				"C:\\fake-project=" + newProject,
+				"--merge"
+			}, null);
+			if (cctResult.ExitCode != 0)
+			{
+				throw new InvalidOperationException("cct rejected legacy fresh ID bundle: " + CctRunner.FirstUseful(cctResult));
+			}
+			CctResult cctResult2 = CctRunner.Run(cct, new string[3] { "list", "--json", "--include-archived" }, null);
+			if (cctResult2.ExitCode != 0 || CctRunner.ParseSessions(cctResult2.StdOut).Count != 2)
+			{
+				throw new InvalidOperationException("independent copy import setup failed");
+			}
+			bool importedLineagePersisted = TargetedThreadIndexer.SnapshotSessionFiles(text).Any(path =>
+				ConversationLineage.TryReadPayload(path, out Dictionary<string, object> payload) &&
+				string.Equals(ConversationLineage.ResolveCurrentThreadId(payload, string.Empty), text10, StringComparison.OrdinalIgnoreCase) &&
+				string.Equals(ConversationLineage.ResolveOriginThreadId(payload, text10), testThreadId, StringComparison.OrdinalIgnoreCase));
+			if (!importedLineagePersisted)
+				throw new InvalidOperationException("cct import did not preserve the immutable origin Thread ID");
+			CctResult cctResult3 = CctRunner.Run(cct, new string[3] { "list", "--json", "--include-archived" }, null);
+			if (cctResult3.ExitCode != 0 || CctRunner.ParseSessions(cctResult3.StdOut).Count != 2)
+			{
+				throw new InvalidOperationException("independent conversation copy was unexpectedly removed");
+			}
+			string databasePath = Path.Combine(text, "state_5.sqlite");
+			WinSqliteMaintenance.CreateTargetedIndexTestDatabase(databasePath);
+			string oldDesktopProjectId = "old-project";
+			string targetDesktopProjectId = "target-project";
+			string originalDesktopState = WriteDesktopStateFixtureForTest(text, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+			{
+				{ oldDesktopProjectId, "C:\\fake-project" },
+				{ targetDesktopProjectId, newProject }
+			}, testThreadId, oldDesktopProjectId, "C:\\fake-project");
+			string text12 = WinSqliteMaintenance.ReadBackfillState(databasePath);
+			HashSet<string> filesBeforeImport = TargetedThreadIndexer.SnapshotSessionFiles(text);
+			CctResult cctResult4 = CctRunner.Run(cct, new string[6]
+			{
+				"import",
+				text7,
+				"--map-cwd",
+				"C:\\fake-project=" + newProject,
+				"--merge",
+				"--replace-with-backup"
+			}, null);
+			if (cctResult4.ExitCode != 0)
+			{
+				throw new InvalidOperationException("cct rejected targeted-index setup import: " + CctRunner.FirstUseful(cctResult4));
+			}
+			Dictionary<string, string> dictionary5 = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+			dictionary5.Add(testThreadId, "功能测试");
+			Dictionary<string, string> dictionary6 = dictionary5;
+			TargetedIndexResult targetedIndexResult = TargetedThreadIndexer.IndexImportedSessions(text, new string[1] { text7 }, filesBeforeImport, copiesOnly: false, newProject, dictionary6);
+			dictionary6[testThreadId] = "功能测试（已更新）";
+			TargetedIndexResult targetedIndexResult2 = TargetedThreadIndexer.IndexImportedSessions(text, new string[1] { text7 }, filesBeforeImport, copiesOnly: false, newProject, dictionary6);
+			string text13 = WinSqliteMaintenance.ReadBackfillState(databasePath);
+			DbThread dbThread = WinSqliteReader.ReadThreads(databasePath).Single();
+			if (targetedIndexResult.InsertedCount != 1 || targetedIndexResult.UpdatedCount != 0 || targetedIndexResult2.InsertedCount != 0 || targetedIndexResult2.UpdatedCount != 1 || text13 != text12 || !text13.StartsWith("complete\u001f", StringComparison.Ordinal) || !File.Exists(targetedIndexResult.BackupPath) || WinSqliteMaintenance.IntegrityCheck(targetedIndexResult.BackupPath) != "ok" || WinSqliteMaintenance.ReadBackfillState(targetedIndexResult.BackupPath) != text12 || WinSqliteReader.ReadThreads(targetedIndexResult.BackupPath).Count != 0 || !string.Equals(dbThread.Id, testThreadId, StringComparison.OrdinalIgnoreCase) || dbThread.Title != "功能测试（已更新）" || !string.Equals(TextHelpers.CanonicalPath(dbThread.Cwd), TextHelpers.CanonicalPath(newProject), StringComparison.OrdinalIgnoreCase))
+			{
+				throw new InvalidOperationException("targeted thread index test failed or backfill_state changed");
+			}
+			if (targetedIndexResult.VisibilityVerifiedCount != 1 || targetedIndexResult2.VisibilityVerifiedCount != 1 || !TextHelpers.HasExtendedPrefix(dbThread.RawCwd) || !TextHelpers.HasExtendedPrefix(dbThread.RolloutPath))
+			{
+				throw new InvalidOperationException("targeted thread Codex visibility path test failed");
+			}
+			if (!targetedIndexResult.DesktopStateFound || targetedIndexResult.DesktopAssignmentExpectedCount != 1 || targetedIndexResult.DesktopAssignmentVerifiedCount != 1 || targetedIndexResult.DesktopProjectCount != 1 ||
+				!targetedIndexResult2.DesktopStateFound || targetedIndexResult2.DesktopAssignmentExpectedCount != 1 || targetedIndexResult2.DesktopAssignmentVerifiedCount != 1 ||
+				!File.Exists(targetedIndexResult.DesktopStateBackupPath) || File.ReadAllText(targetedIndexResult.DesktopStateBackupPath, Encoding.UTF8) != originalDesktopState)
+			{
+				throw new InvalidOperationException("desktop project assignment backup or verification test failed");
+			}
+			AssertDesktopAssignmentForTest(Path.Combine(text, ".codex-global-state.json"), testThreadId, newProject, targetDesktopProjectId, "C:\\fake-project");
+			string mappedFixtures = Path.Combine(text, "mapped-fixtures");
+			Directory.CreateDirectory(mappedFixtures);
+			string secondThreadId = "22222222-2222-4222-8222-222222222222";
+			string secondSessionPath = Path.Combine(mappedFixtures, "rollout-2026-01-03T03-04-05-" + secondThreadId + ".jsonl");
+			string secondContents = fixtureContents.Replace(testThreadId, secondThreadId).Replace("C:\\\\fake-project", "C:\\\\fake-project-two").Replace("真正的问题", "第二个项目的问题").Replace("这是回答。", "第二个项目的回答。");
+			File.WriteAllText(secondSessionPath, secondContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			SessionInfo secondSession = new SessionInfo
+			{
+				ThreadId = secondThreadId,
+				SessionPath = secondSessionPath,
+				RelativePath = "2026/01/03/" + Path.GetFileName(secondSessionPath),
+				Title = "第二项目功能测试",
+				Cwd = "C:\\fake-project-two",
+				Preview = "第二个项目的问题",
+				Source = "cli",
+				CreatedAt = "2026-01-03T03:04:05Z",
+				UpdatedAt = "2026-01-03T03:05:06Z",
+				UpdatedDate = new DateTime(2026, 1, 3, 3, 5, 6, DateTimeKind.Utc)
+			};
+			string secondBundle = Path.Combine(mappedFixtures, "second-project.codexbundle");
+			ExactBundleWriter.CreateSingleSessionBundle(secondSession, secondBundle);
+			string mappedHome = Path.Combine(text, "mapped-index");
+			Directory.CreateDirectory(mappedHome);
+			try
+			{
+				Environment.SetEnvironmentVariable("CODEX_HOME", mappedHome);
+				string mappedDatabase = Path.Combine(mappedHome, "state_5.sqlite");
+				WinSqliteMaintenance.CreateTargetedIndexTestDatabase(mappedDatabase);
+				string mappedTargetOne = Path.Combine(mappedHome, "projects", "one");
+				string mappedTargetTwo = Path.Combine(mappedHome, "projects", "two");
+				Directory.CreateDirectory(mappedTargetOne);
+				Directory.CreateDirectory(mappedTargetTwo);
+				WriteDesktopStateFixtureForTest(mappedHome, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase), null, null, null);
+				HashSet<string> mappedBefore = TargetedThreadIndexer.SnapshotSessionFiles(mappedHome);
+				CctResult mappedImportOne = CctRunner.Run(cct, new string[5] { "import", text7, "--map-cwd", "C:\\fake-project=" + mappedTargetOne, "--merge" }, null);
+				CctResult mappedImportTwo = CctRunner.Run(cct, new string[5] { "import", secondBundle, "--map-cwd", "C:\\fake-project-two=" + mappedTargetTwo, "--merge" }, null);
+				if (mappedImportOne.ExitCode != 0 || mappedImportTwo.ExitCode != 0)
+				{
+					throw new InvalidOperationException("multi-project mapped import setup failed");
+				}
+				Dictionary<string, string> targetsByBundle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+				{
+					{ Path.GetFullPath(text7), mappedTargetOne },
+					{ Path.GetFullPath(secondBundle), mappedTargetTwo }
+				};
+				Dictionary<string, string> mappedTitles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+				{
+					{ testThreadId, "项目一" },
+					{ secondThreadId, "项目二" }
+				};
+				TargetedIndexResult mappedResult = TargetedThreadIndexer.IndexImportedSessionsMapped(mappedHome, new string[2] { text7, secondBundle }, mappedBefore, copiesOnly: false, targetsByBundle, mappedTitles);
+				Dictionary<string, DbThread> mappedThreads = WinSqliteReader.ReadThreads(mappedDatabase).ToDictionary((DbThread item) => item.Id, StringComparer.OrdinalIgnoreCase);
+				if (mappedResult.InsertedCount != 2 || mappedThreads.Count != 2 || !string.Equals(TextHelpers.CanonicalPath(mappedThreads[testThreadId].Cwd), TextHelpers.CanonicalPath(mappedTargetOne), StringComparison.OrdinalIgnoreCase) || !string.Equals(TextHelpers.CanonicalPath(mappedThreads[secondThreadId].Cwd), TextHelpers.CanonicalPath(mappedTargetTwo), StringComparison.OrdinalIgnoreCase))
+				{
+					throw new InvalidOperationException("multi-project mapped targeted index test failed");
+				}
+				if (mappedResult.VisibilityVerifiedCount != 2 || mappedThreads.Values.Any((DbThread item) => !TextHelpers.HasExtendedPrefix(item.RawCwd) || !TextHelpers.HasExtendedPrefix(item.RolloutPath)))
+				{
+					throw new InvalidOperationException("multi-project Codex visibility path test failed");
+				}
+				if (!mappedResult.DesktopStateFound || mappedResult.DesktopAssignmentExpectedCount != 2 || mappedResult.DesktopAssignmentVerifiedCount != 2 || mappedResult.DesktopProjectCount != 2 || !File.Exists(mappedResult.DesktopStateBackupPath))
+				{
+					throw new InvalidOperationException("multi-project desktop assignment registration test failed");
+				}
+				AssertDesktopAssignmentForTest(Path.Combine(mappedHome, ".codex-global-state.json"), testThreadId, mappedTargetOne, null, "C:\\fake-project");
+				AssertDesktopAssignmentForTest(Path.Combine(mappedHome, ".codex-global-state.json"), secondThreadId, mappedTargetTwo, null, "C:\\fake-project-two");
+			}
+			finally
+			{
+				Environment.SetEnvironmentVariable("CODEX_HOME", text);
+			}
+			string[] array = new string[2] { "pending", "running" };
+			foreach (string text14 in array)
+			{
+				string text15 = Path.Combine(text, text14 + "-guard");
+				Directory.CreateDirectory(text15);
+				string databasePath2 = Path.Combine(text15, "state_5.sqlite");
+				WinSqliteMaintenance.CreateTargetedIndexTestDatabase(databasePath2, text14);
+				string text16 = WinSqliteMaintenance.ReadBackfillState(databasePath2);
+				bool flag2 = false;
+				try
+				{
+					WinSqliteMaintenance.UpsertImportedThreads(text15, new ThreadIndexMetadata[1] { TargetedThreadIndexer.ReadMetadataForTest(text3, "功能测试", "真正的问题") });
+				}
+				catch (InvalidOperationException ex2)
+				{
+					flag2 = ex2.Message.IndexOf(text14, StringComparison.OrdinalIgnoreCase) >= 0;
+				}
+				if (!flag2 || WinSqliteMaintenance.ReadBackfillState(databasePath2) != text16 || WinSqliteReader.ReadThreads(databasePath2).Count != 0 || Directory.Exists(Path.Combine(text15, "conversation-migrator-index-backups")))
+				{
+					throw new InvalidOperationException(text14 + " backfill guard test failed");
+				}
+			}
+			string text17 = Path.Combine(text, "copy-mode");
+			Directory.CreateDirectory(text17);
+			try
+			{
+				Environment.SetEnvironmentVariable("CODEX_HOME", text17);
+				string databasePath3 = Path.Combine(text17, "state_5.sqlite");
+				WinSqliteMaintenance.CreateTargetedIndexTestDatabase(databasePath3);
+				CctResult cctResult5 = CctRunner.Run(cct, new string[5]
+				{
+					"import",
+					text7,
+					"--map-cwd",
+					"C:\\fake-project=" + newProject,
+					"--merge"
+				}, null);
+				if (cctResult5.ExitCode != 0)
+				{
+					throw new InvalidOperationException("cct rejected copy-mode seed import: " + CctRunner.FirstUseful(cctResult5));
+				}
+				string path = TargetedThreadIndexer.SnapshotSessionFiles(text17).Single();
+				string contents = File.ReadAllText(path, Encoding.UTF8).Replace("这是回答。", "这是本机分支回答。");
+				File.WriteAllText(path, contents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+				HashSet<string> filesBeforeImport2 = TargetedThreadIndexer.SnapshotSessionFiles(text17);
+				string text18 = WinSqliteMaintenance.ReadBackfillState(databasePath3);
+				CctResult cctResult6 = CctRunner.Run(cct, new string[6]
+				{
+					"import",
+					text7,
+					"--map-cwd",
+					"C:\\fake-project=" + newProject,
+					"--merge",
+					"--import-as-copy"
+				}, null);
+				if (cctResult6.ExitCode != 0)
+				{
+					throw new InvalidOperationException("cct rejected copy-mode conflict import: " + CctRunner.FirstUseful(cctResult6));
+				}
+				TargetedIndexResult targetedIndexResult3 = TargetedThreadIndexer.IndexImportedSessions(text17, new string[1] { text7 }, filesBeforeImport2, copiesOnly: true, newProject, dictionary6);
+				List<DbThread> list = WinSqliteReader.ReadThreads(databasePath3);
+				if (targetedIndexResult3.InsertedCount != 2 || targetedIndexResult3.UpdatedCount != 0 || targetedIndexResult3.IndexedCount != 2 || list.Count != 2 || WinSqliteMaintenance.ReadBackfillState(databasePath3) != text18 || !list.Any((DbThread item) => string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)) || !list.Any((DbThread item) => !string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)) || list.Any((DbThread item) => !string.Equals(TextHelpers.CanonicalPath(item.Cwd), TextHelpers.CanonicalPath(newProject), StringComparison.OrdinalIgnoreCase)))
+				{
+					throw new InvalidOperationException("copy-mode targeted index test failed");
+				}
+				if (targetedIndexResult3.VisibilityVerifiedCount != 2 || list.Any((DbThread item) => !TextHelpers.HasExtendedPrefix(item.RawCwd) || !TextHelpers.HasExtendedPrefix(item.RolloutPath)))
+				{
+					throw new InvalidOperationException("copy-mode Codex visibility path test failed");
+				}
+			}
+			finally
+			{
+				Environment.SetEnvironmentVariable("CODEX_HOME", text);
+			}
+			string originalSessionContents = File.ReadAllText(text3, Encoding.UTF8);
+			string trashDeleteCctBackup = text3 + ".cct-bak-1001";
+			File.Copy(text3, trashDeleteCctBackup);
+			DeletedSessionResult deletedSessionResult = ConversationStorage.MoveToTrash(session, newProject);
+			if (File.Exists(text3) || File.Exists(trashDeleteCctBackup) || !File.Exists(deletedSessionResult.BackupPath) || !File.Exists(deletedSessionResult.BackupPath + ".delete-info.json"))
+			{
+				throw new InvalidOperationException("safe delete test failed");
+			}
+			TrashSessionInfo trashSessionInfo = ConversationStorage.ReadTrash().Single((TrashSessionInfo item) => string.Equals(item.ThreadId, testThreadId, StringComparison.OrdinalIgnoreCase));
+			if (!string.Equals(TextHelpers.CanonicalPath(trashSessionInfo.ProjectPath), TextHelpers.CanonicalPath(newProject), StringComparison.OrdinalIgnoreCase))
+			{
+				throw new InvalidOperationException("trash project metadata test failed");
+			}
+			CctResult cctResult7 = CctRunner.Run(cct, new string[3] { "list", "--json", "--include-archived" }, null);
+			if (cctResult7.ExitCode != 0 || CctRunner.ParseSessions(cctResult7.StdOut).Count != 1)
+			{
+				throw new InvalidOperationException("deleting the original conversation affected its independent copy");
+			}
+			ConversationStorage.Restore(trashSessionInfo);
+			if (!File.Exists(text3) || File.Exists(deletedSessionResult.BackupPath) || ConversationStorage.ReadTrash().Any((TrashSessionInfo item) => string.Equals(item.ThreadId, testThreadId, StringComparison.OrdinalIgnoreCase)))
+			{
+				throw new InvalidOperationException("trash restore test failed");
+			}
+			DeletedSessionResult deletedSessionResult2 = ConversationStorage.MoveToTrash(session, newProject);
+			TrashSessionInfo trashSessionInfo2 = ConversationStorage.ReadTrash().Single((TrashSessionInfo item) => string.Equals(item.ThreadId, testThreadId, StringComparison.OrdinalIgnoreCase));
+			string trashPurgeCctBackup = text3 + ".cct-bak-1002";
+			File.Copy(deletedSessionResult2.BackupPath, trashPurgeCctBackup);
+			ConversationStorage.DeleteFromTrash(trashSessionInfo2);
+			if (File.Exists(trashPurgeCctBackup) || File.Exists(deletedSessionResult2.BackupPath) || File.Exists(deletedSessionResult2.BackupPath + ".delete-info.json"))
+			{
+				throw new InvalidOperationException("trash permanent purge test failed");
+			}
+			File.WriteAllText(text3, originalSessionContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			string permanentDeleteCctBackup = text3 + ".cct-bak-1003";
+			File.Copy(text3, permanentDeleteCctBackup);
+			DeletedSessionResult deletedSessionResult3 = ConversationStorage.DeletePermanently(session);
+			if (File.Exists(text3) || File.Exists(permanentDeleteCctBackup) || !deletedSessionResult3.PermanentlyDeleted || !string.IsNullOrEmpty(deletedSessionResult3.BackupPath))
+			{
+				throw new InvalidOperationException("direct permanent delete test failed");
+			}
+			string legacyThreadId = "33333333-3333-4333-8333-333333333333";
+			string legacyActive = Path.Combine(text2, "rollout-2026-01-04T03-04-05-" + legacyThreadId + ".jsonl");
+			string legacyContents = fixtureContents.Replace(testThreadId, legacyThreadId).Replace("真正的问题", "旧版安全快照测试");
+			string legacyBackupOne = legacyActive + ".cct-bak-2001";
+			string legacyBackupTwo = legacyActive + ".cct-bak-2002";
+			File.WriteAllText(legacyBackupOne, legacyContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			File.WriteAllText(legacyBackupTwo, legacyContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			LegacyCctBackupMigrationResult legacyMigration = CctBackupMaintenance.MoveLegacyBackupsToTrash(text);
+			if (legacyMigration.MovedToTrashCount != 1 || legacyMigration.RedundantDeletedCount != 1 || File.Exists(legacyBackupOne) || File.Exists(legacyBackupTwo))
+			{
+				throw new InvalidOperationException("legacy cct backup migration test failed");
+			}
+			TrashSessionInfo legacyTrash = ConversationStorage.ReadTrash().Single((TrashSessionInfo item) => string.Equals(item.ThreadId, legacyThreadId, StringComparison.OrdinalIgnoreCase));
+			if (legacyTrash.DisplayTitle.IndexOf("旧版安全快照", StringComparison.Ordinal) < 0 || !File.Exists(legacyTrash.BackupPath))
+			{
+				throw new InvalidOperationException("legacy cct backup was not visible in trash");
+			}
+			ConversationStorage.DeleteFromTrash(legacyTrash);
+			if (File.Exists(legacyTrash.BackupPath) || File.Exists(legacyTrash.SidecarPath))
+			{
+				throw new InvalidOperationException("legacy cct trash purge test failed");
+			}
+
+			bool projectGuardWorked = false;
+			try
+			{
+				ConversationStorage.ValidateProjectPath(text);
+			}
+			catch (InvalidOperationException)
+			{
+				projectGuardWorked = true;
+			}
+			if (!projectGuardWorked)
+			{
+				throw new InvalidOperationException("Codex home project deletion guard test failed");
+			}
+			Directory.CreateDirectory(projectDeleteTest);
+			File.WriteAllText(Path.Combine(projectDeleteTest, "keep-until-confirmed.txt"), "test", Encoding.UTF8);
+			ConversationStorage.DeleteProject(projectDeleteTest, ProjectDeleteMode.Permanent);
+			if (Directory.Exists(projectDeleteTest))
+			{
+				throw new InvalidOperationException("project permanent delete test failed");
+			}
+			string payloadSource = Path.Combine(projectPayloadTest, "source-project");
+			string payloadTarget = Path.Combine(projectPayloadTest, "restored-project");
+			string payloadArchive = Path.Combine(projectPayloadTest, "project-files.zip");
+			Directory.CreateDirectory(Path.Combine(payloadSource, "src"));
+			Directory.CreateDirectory(Path.Combine(payloadSource, "empty-directory"));
+			File.WriteAllText(Path.Combine(payloadSource, "src", "hello.txt"), "payload-content", new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			File.WriteAllText(Path.Combine(payloadSource, "中文文件.txt"), "中文内容", new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			string excludedPack = Path.Combine(payloadSource, "do-not-include.codexpack");
+			File.WriteAllText(excludedPack, "exclude-me", Encoding.UTF8);
+			ProjectPayloadInfo payloadInfo = ProjectPayloadService.CreateArchive(payloadSource, payloadArchive, excludedPack, null);
+			if (payloadInfo.file_count != 2 || payloadInfo.directory_count < 2 || payloadInfo.uncompressed_bytes <= 0L || string.IsNullOrWhiteSpace(payloadInfo.sha256))
+			{
+				throw new InvalidOperationException("project payload creation test failed");
+			}
+			PackManifest payloadManifest = new PackManifest
+			{
+				schema = 3,
+				mode = "project_with_files",
+				source_project = payloadSource,
+				project_payload = payloadInfo,
+				bundles = new List<string>(),
+				sessions = new List<PackSession>()
+			};
+			PackManifest payloadManifestRoundTrip = javaScriptSerializer.Deserialize<PackManifest>(javaScriptSerializer.Serialize(payloadManifest));
+			if (payloadManifestRoundTrip?.project_payload?.file_count != 2)
+			{
+				throw new InvalidOperationException("schema 3 project payload manifest test failed");
+			}
+			string combinedStaging = Path.Combine(projectPayloadTest, "combined-pack-staging");
+			string combinedPack = Path.Combine(projectPayloadTest, "project-and-conversations.codexproject");
+			string combinedExtract = Path.Combine(projectPayloadTest, "combined-pack-extract");
+			Directory.CreateDirectory(combinedStaging);
+			File.Copy(payloadArchive, Path.Combine(combinedStaging, "project-files.zip"));
+			File.Copy(text7, Path.Combine(combinedStaging, "project.codexbundle"));
+			payloadManifest.bundles = new List<string> { "project.codexbundle" };
+			payloadManifest.sessions = new List<PackSession>
+			{
+				new PackSession
+				{
+					thread_id = testThreadId,
+					title = "功能测试",
+					bundle_file = "project.codexbundle"
+				}
+			};
+			File.WriteAllText(Path.Combine(combinedStaging, "manifest.json"), javaScriptSerializer.Serialize(payloadManifest), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			ZipFile.CreateFromDirectory(combinedStaging, combinedPack, CompressionLevel.Optimal, includeBaseDirectory: false);
+			ZipFile.ExtractToDirectory(combinedPack, combinedExtract);
+			PackManifest combinedManifest = javaScriptSerializer.Deserialize<PackManifest>(File.ReadAllText(Path.Combine(combinedExtract, "manifest.json"), Encoding.UTF8));
+			if (combinedManifest?.schema != 3 || combinedManifest.bundles?.SingleOrDefault() != "project.codexbundle")
+			{
+				throw new InvalidOperationException("combined project and conversation package manifest test failed");
+			}
+			PackManifest batchManifest = new PackManifest
+			{
+				schema = 5,
+				mode = "batch_projects_with_files",
+				bundles = new List<string>
+				{
+					"projects/project-001/project.codexbundle",
+					"projects/project-002/project.codexbundle"
+				},
+				projects = new List<PackProject>
+				{
+					new PackProject
+					{
+						project_key = "project-001",
+						source_project = "D:\\OldComputer\\Projects\\project-one",
+						source_project_name = "project-one",
+						target_folder = "project-one",
+						bundles = new List<string> { "projects/project-001/project.codexbundle" }
+					},
+					new PackProject
+					{
+						project_key = "project-002",
+						source_project = "D:\\OldComputer\\Projects\\project-two",
+						source_project_name = "project-two",
+						target_folder = "project-two",
+						bundles = new List<string> { "projects/project-002/project.codexbundle" }
+					}
+				},
+				sessions = new List<PackSession>
+				{
+					new PackSession
+					{
+						origin_thread_id = testThreadId,
+						thread_id = testThreadId,
+						project_key = "project-001",
+						bundle_file = "projects/project-001/project.codexbundle"
+					},
+					new PackSession
+					{
+						thread_id = secondThreadId,
+						origin_thread_id = secondThreadId,
+						project_key = "project-002",
+						bundle_file = "projects/project-002/project.codexbundle"
+					}
+				}
+			};
+			PackManifest batchRoundTrip = javaScriptSerializer.Deserialize<PackManifest>(javaScriptSerializer.Serialize(batchManifest));
+			string batchTargetRoot = Path.Combine(projectPayloadTest, "batch-target");
+			List<string> batchTargets = MainWindowController.BuildProjectTargetPaths(batchRoundTrip.projects, batchTargetRoot);
+			if (batchRoundTrip?.schema != 5 || batchRoundTrip.projects?.Count != 2 || batchRoundTrip.sessions?.Count != 2 || batchRoundTrip.sessions.Any(item => string.IsNullOrWhiteSpace(item.origin_thread_id)) || batchTargets.Count != 2 || !string.Equals(batchTargets[0], Path.Combine(batchTargetRoot, "project-one"), StringComparison.OrdinalIgnoreCase) || !string.Equals(batchTargets[1], Path.Combine(batchTargetRoot, "project-two"), StringComparison.OrdinalIgnoreCase))
+			{
+				throw new InvalidOperationException("schema 5 multi-project lineage manifest and target mapping test failed");
+			}
+			bool batchTargetTraversalBlocked = false;
+			batchRoundTrip.projects[1].target_folder = "..\\escape";
+			try
+			{
+				MainWindowController.BuildProjectTargetPaths(batchRoundTrip.projects, batchTargetRoot);
+			}
+			catch (InvalidDataException)
+			{
+				batchTargetTraversalBlocked = true;
+			}
+			if (!batchTargetTraversalBlocked)
+			{
+				throw new InvalidOperationException("schema 4 project target traversal guard test failed");
+			}
+			TargetedThreadIndexer.ValidateBundles(new string[1] { Path.Combine(combinedExtract, combinedManifest.bundles[0]) });
+			ProjectRestorePlan combinedPlan = ProjectPayloadService.InspectArchive(ProjectPayloadService.ResolvePayloadArchivePath(combinedExtract, combinedManifest.project_payload), combinedManifest.project_payload, Path.Combine(projectPayloadTest, "combined-inspect-target"), ProjectFileConflictMode.RequireEmpty);
+			if (combinedPlan.FileCount != 2)
+			{
+				throw new InvalidOperationException("combined project payload inspection test failed");
+			}
+			ProjectRestorePlan payloadPlan = ProjectPayloadService.InspectArchive(payloadArchive, payloadInfo, payloadTarget, ProjectFileConflictMode.RequireEmpty);
+			if (payloadPlan.FileCount != 2 || payloadPlan.NewFileCount != 2 || payloadPlan.ExistingFileCount != 0)
+			{
+				throw new InvalidOperationException("project payload dry-run inspection test failed");
+			}
+			ProjectRestoreResult payloadRestore = ProjectPayloadService.RestoreArchive(payloadArchive, payloadInfo, payloadTarget, ProjectFileConflictMode.RequireEmpty);
+			if (payloadRestore.CreatedFileCount != 2 || File.ReadAllText(Path.Combine(payloadTarget, "src", "hello.txt"), Encoding.UTF8) != "payload-content" || !Directory.Exists(Path.Combine(payloadTarget, "empty-directory")) || File.Exists(Path.Combine(payloadTarget, "do-not-include.codexpack")))
+			{
+				throw new InvalidOperationException("project payload restore test failed");
+			}
+			File.WriteAllText(Path.Combine(payloadTarget, "src", "hello.txt"), "local-version", new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			ProjectRestoreResult payloadSkip = ProjectPayloadService.RestoreArchive(payloadArchive, payloadInfo, payloadTarget, ProjectFileConflictMode.SkipExisting);
+			if (payloadSkip.SkippedFileCount != 2 || File.ReadAllText(Path.Combine(payloadTarget, "src", "hello.txt"), Encoding.UTF8) != "local-version")
+			{
+				throw new InvalidOperationException("project payload skip-existing test failed");
+			}
+			ProjectRestoreResult payloadOverwrite = ProjectPayloadService.RestoreArchive(payloadArchive, payloadInfo, payloadTarget, ProjectFileConflictMode.OverwriteWithBackup);
+			if (payloadOverwrite.OverwrittenFileCount != 2 || File.ReadAllText(Path.Combine(payloadTarget, "src", "hello.txt"), Encoding.UTF8) != "payload-content" || !File.Exists(payloadOverwrite.BackupPath))
+			{
+				throw new InvalidOperationException("project payload overwrite-with-backup test failed");
+			}
+			using (ZipArchive overwriteBackup = ZipFile.OpenRead(payloadOverwrite.BackupPath))
+			{
+				ZipArchiveEntry backedHello = overwriteBackup.GetEntry("src/hello.txt");
+				if (backedHello == null)
+				{
+					throw new InvalidOperationException("project overwrite backup entry missing");
+				}
+				using StreamReader backedReader = new StreamReader(backedHello.Open(), Encoding.UTF8);
+				if (backedReader.ReadToEnd() != "local-version")
+				{
+					throw new InvalidOperationException("project overwrite backup content test failed");
+				}
+			}
+			string maliciousArchive = Path.Combine(projectPayloadTest, "malicious.zip");
+			using (ZipArchive malicious = ZipFile.Open(maliciousArchive, ZipArchiveMode.Create))
+			{
+				ZipArchiveEntry escape = malicious.CreateEntry("../escape.txt");
+				using StreamWriter escapeWriter = new StreamWriter(escape.Open(), Encoding.UTF8);
+				escapeWriter.Write("escape");
+			}
+			ProjectPayloadInfo maliciousInfo = new ProjectPayloadInfo
+			{
+				archive_file = "malicious.zip",
+				file_count = 1,
+				directory_count = 0,
+				uncompressed_bytes = 6,
+				sha256 = ProjectPayloadService.Sha256File(maliciousArchive)
+			};
+			bool traversalBlocked = false;
+			try
+			{
+				ProjectPayloadService.InspectArchive(maliciousArchive, maliciousInfo, Path.Combine(projectPayloadTest, "malicious-target"), ProjectFileConflictMode.RequireEmpty);
+			}
+			catch (InvalidDataException)
+			{
+				traversalBlocked = true;
+			}
+			if (!traversalBlocked)
+			{
+				throw new InvalidOperationException("project payload traversal guard test failed");
+			}
+			return "ImportModes=origin-merge+independent-copy · SamePathMap=skipped · FormalBackup=.codexchat+.codexproject+legacy · CctBak=rollback+commit+delete+legacy-trash · Lineage=origin-persist+project-scope+parent-child+fresh-every-time+ambiguity-guard · IndependentCopy=retained+delete-isolated · TargetedIndex=insert+update+two-project-cwd+native-path+visibility · DesktopProjectState=existing-remap+create+multi-project+backup+verify · BackupPrewrite=OK · BackfillUnchanged=complete · PendingRunningGuard=OK · ZstdPreflight=OK · Preview=2 messages · Trash=move+list+restore+purge · PermanentDelete=OK · ProjectGuard+Permanent=OK · ProjectPayload=schema5+two-targets+target-guard+combined-pack+create+inspect+restore+skip+backup+traversal-guard · ResizeGrips=8";
+		}
+		finally
+		{
+			Environment.SetEnvironmentVariable("CODEX_HOME", environmentVariable);
+			try
+			{
+				if (Environment.GetEnvironmentVariable("CODEX_MIGRATOR_KEEP_TEST") != "1" && Directory.Exists(text))
+				{
+					Directory.Delete(text, recursive: true);
+				}
+				if (Directory.Exists(projectDeleteTest))
+				{
+					Directory.Delete(projectDeleteTest, recursive: true);
+				}
+				if (Directory.Exists(projectPayloadTest))
+				{
+					Directory.Delete(projectPayloadTest, recursive: true);
+				}
+			}
+			catch
+			{
+			}
+		}
+	}
+	private static string WriteDesktopStateFixtureForTest(string codexHome, IDictionary<string, string> projectPathsById, string assignedThreadId, string assignedProjectId, string assignedCwd)
+	{
+		Dictionary<string, object> projects = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+		long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+		foreach (KeyValuePair<string, string> pair in projectPathsById ?? new Dictionary<string, string>())
+		{
+			projects[pair.Key] = new Dictionary<string, object>
+			{
+				{ "id", pair.Key },
+				{ "name", Path.GetFileName(pair.Value.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) },
+				{ "rootPaths", new object[1] { pair.Value } },
+				{ "createdAt", now },
+				{ "updatedAt", now }
+			};
+		}
+		Dictionary<string, object> assignments = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+		Dictionary<string, object> hints = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+		Dictionary<string, object> writableRoots = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+		object[] projectless = new object[0];
+		if (!string.IsNullOrWhiteSpace(assignedThreadId))
+		{
+			assignments[assignedThreadId] = new Dictionary<string, object>
+			{
+				{ "projectKind", "local" },
+				{ "projectId", assignedProjectId },
+				{ "cwd", assignedCwd },
+				{ "pendingCoreUpdate", false }
+			};
+			hints[assignedThreadId] = assignedCwd;
+			writableRoots[assignedThreadId] = new object[2] { assignedCwd, "C:\\keep-root" };
+			projectless = new object[1] { assignedThreadId };
+		}
+		Dictionary<string, object> state = new Dictionary<string, object>
+		{
+			{ "local-projects", projects },
+			{ "project-order", projectPathsById.Keys.Cast<object>().ToArray() },
+			{ "electron-saved-workspace-roots", projectPathsById.Values.Cast<object>().ToArray() },
+			{ "thread-project-assignments", assignments },
+			{ "projectless-thread-ids", projectless },
+			{ "thread-workspace-root-hints", hints },
+			{ "thread-writable-roots", writableRoots }
+		};
+		string json = CctRunner.NewSerializer().Serialize(state);
+		File.WriteAllText(Path.Combine(codexHome, ".codex-global-state.json"), json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+		return json;
+	}
+
+	private static void AssertDesktopAssignmentForTest(string statePath, string threadId, string expectedCwd, string expectedProjectId, string forbiddenCwd)
+	{
+		Dictionary<string, object> state = CctRunner.NewSerializer().DeserializeObject(File.ReadAllText(statePath, Encoding.UTF8)) as Dictionary<string, object>;
+		Dictionary<string, object> projects = state?["local-projects"] as Dictionary<string, object>;
+		Dictionary<string, object> assignments = state?["thread-project-assignments"] as Dictionary<string, object>;
+		Dictionary<string, object> writableRoots = state?["thread-writable-roots"] as Dictionary<string, object>;
+		Dictionary<string, object> hints = state?["thread-workspace-root-hints"] as Dictionary<string, object>;
+		object[] projectless = state?["projectless-thread-ids"] as object[];
+		if (projects == null || assignments == null || writableRoots == null || projectless == null ||
+			!assignments.TryGetValue(threadId, out object assignmentValue) || !(assignmentValue is Dictionary<string, object> assignment))
+		{
+			throw new InvalidOperationException("desktop project state fixture is missing the imported assignment");
+		}
+		string projectId = Convert.ToString(assignment["projectId"]);
+		string cwd = Convert.ToString(assignment["cwd"]);
+		if (!string.Equals(Convert.ToString(assignment["projectKind"]), "local", StringComparison.OrdinalIgnoreCase) ||
+			(!string.IsNullOrWhiteSpace(expectedProjectId) && !string.Equals(projectId, expectedProjectId, StringComparison.OrdinalIgnoreCase)) ||
+			!string.Equals(TextHelpers.CanonicalPath(cwd), TextHelpers.CanonicalPath(expectedCwd), StringComparison.OrdinalIgnoreCase))
+		{
+			throw new InvalidOperationException("desktop project assignment does not point at the imported project");
+		}
+		if (!projects.TryGetValue(projectId, out object projectValue) || !(projectValue is Dictionary<string, object> project) ||
+			!(project["rootPaths"] is object[] projectRoots) ||
+			!projectRoots.Any((object root) => string.Equals(TextHelpers.CanonicalPath(Convert.ToString(root)), TextHelpers.CanonicalPath(expectedCwd), StringComparison.OrdinalIgnoreCase)))
+		{
+			throw new InvalidOperationException("desktop project root was not registered");
+		}
+		if (!writableRoots.TryGetValue(threadId, out object rootsValue) || !(rootsValue is object[] roots) ||
+			!roots.Any((object root) => string.Equals(TextHelpers.CanonicalPath(Convert.ToString(root)), TextHelpers.CanonicalPath(expectedCwd), StringComparison.OrdinalIgnoreCase)) ||
+			(!string.IsNullOrWhiteSpace(forbiddenCwd) && roots.Any((object root) => string.Equals(TextHelpers.CanonicalPath(Convert.ToString(root)), TextHelpers.CanonicalPath(forbiddenCwd), StringComparison.OrdinalIgnoreCase))) ||
+			projectless.Any((object value) => string.Equals(Convert.ToString(value), threadId, StringComparison.OrdinalIgnoreCase)) ||
+			(hints != null && hints.ContainsKey(threadId)))
+		{
+			throw new InvalidOperationException("desktop workspace roots or projectless state were not remapped");
+		}
+	}
+
+
+	private static int RunSelfTest(string cct, string report)
+	{
+		try
+		{
+			if (string.IsNullOrWhiteSpace(cct))
+			{
+				throw new FileNotFoundException("cct.exe not found");
+			}
+			string text = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CodexConversationMigrator.xaml");
+			if (!File.Exists(text))
+			{
+				throw new FileNotFoundException("UI xaml not found", text);
+			}
+			{
+				string localizedXaml = UiLanguage.LoadXaml(text);
+				object obj = XamlReader.Parse(localizedXaml);
+				if (!(obj is Window window))
+				{
+					throw new InvalidDataException("XAML root is not Window");
+				}
+				string[] array = new string[56]
+				{
+					"MergeModeRadio", "CopyModeRadio", "ImportModeHelpText", "ConversationOverlay", "ConversationList", "ConversationCloseButton", "ConversationCanvas", "ConversationDialogHost", "ConversationResizeTop",
+					"ConversationResizeBottom", "ConversationResizeLeft", "ConversationResizeRight", "ConversationResizeTopLeft", "ConversationResizeTopRight", "ConversationResizeBottomLeft", "ConversationResizeBottomRight", "TrashButton", "BackupProjectFilesButton", "ProjectRestorePanel",
+					"RestoreProjectFilesCheck", "ProjectConflictCombo", "BackupFolderBox", "BrowseBackupFolderButton", "SelectAllProjectsButton", "ClearProjectsButton", "TargetPathLabel", "TargetPathHelpText", "MaximizeGlyph", "RestoreGlyph",
+					"ProjectBackupModeRadio", "ConversationBackupModeRadio", "BackupModeHelpText", "ProjectSelectionTools", "SessionSelectionTools", "ToggleSessionSelectionButton", "DeleteSelectedSessionsButton", "ProjectPaneTitle", "ProjectPaneSubtitle", "SessionModeHint", "SelectionHelpText", "ConversationMaximizeGlyph",
+					"ConversationRestoreGlyph", "MainSessionsTabRadio", "SubagentSessionsTabRadio", "CopyProjectPathButton", "ProjectSizeText",
+					"BrowsePackageButton", "BrowseTargetButton", "ImportProgressPanel", "ImportStageText", "ImportStageDetailText", "ImportElapsedText", "ImportStageProgress", "ImportWorkflowGrid", "ImportActionBar", "LanguageButton"
+				};
+				string[] array2 = array;
+				foreach (string text2 in array2)
+				{
+					if (window.FindName(text2) == null)
+					{
+						throw new InvalidDataException("UI control missing: " + text2);
+					}
+				}
+				if (window.Icon == null)
+				{
+					throw new InvalidDataException("application icon was not loaded");
+				}
+				window.Close();
+			}
+			if (!DialogUi.VerifyThemeForTest())
+			{
+				throw new InvalidDataException("dialog theme did not apply to generated controls");
+			}
+			string text3 = RunFeatureSafetyTest(cct);
+			string presentationDataTests = RunPresentationDataTest();
+			CctResult cctResult = CctRunner.Run(cct, new string[1] { "--version" }, null);
+			CctResult cctResult2 = CctRunner.Run(cct, new string[3] { "list", "--json", "--include-archived" }, null);
+			if (cctResult.ExitCode != 0 || cctResult2.ExitCode != 0)
+			{
+				throw new InvalidOperationException("cct command failed");
+			}
+			List<SessionInfo> list = CctRunner.ParseSessions(cctResult2.StdOut);
+			CatalogResult catalogResult = CodexCatalog.Build(list);
+			int linkedSubagents = list.Count((SessionInfo session) => session.IsSubagent && !string.IsNullOrWhiteSpace(session.ParentThreadId));
+			int sizedSessions = list.Count((SessionInfo session) => session.SizeBytes > 0L && !string.IsNullOrWhiteSpace(session.DisplayPath));
+			if (catalogResult.InternalCount > 0 && linkedSubagents == 0)
+			{
+				throw new InvalidDataException("subagent parent links were not detected");
+			}
+			if (list.Count > 0 && sizedSessions == 0)
+			{
+				throw new InvalidDataException("session file sizes and paths were not detected");
+			}
+			ProjectGroup sampleProject = catalogResult.Projects.FirstOrDefault((ProjectGroup x) => x.Sessions.Count > 0);
+			SessionInfo sampleParent = list.FirstOrDefault((SessionInfo x) => !x.IsSubagent);
+			bool sampleParentGrouped = sampleParent != null && catalogResult.Projects.Any((ProjectGroup x) => x.Sessions.Contains(sampleParent));
+			string contents = "OK\r\n" + cctResult.StdOut.Trim() + "\r\nRawSessions=" + list.Count + "\r\nProjects=" + catalogResult.Projects.Count + "\r\nMain=" + catalogResult.MainCount + "\r\nSubagents=" + catalogResult.InternalCount + "\r\nLinkedSubagents=" + linkedSubagents + "\r\nSizedSessions=" + sizedSessions + "\r\nUsedCodexIndex=" + catalogResult.UsedCodexIndex + "\r\nFeatureTests=" + text3 + "\r\nPresentationDataTests=" + presentationDataTests + "\r\nSampleParentFound=" + (sampleParent != null) + "\r\nSampleParentGrouped=" + sampleParentGrouped + "\r\nSampleProjectMain=" + (sampleProject?.MainCount ?? 0) + "\r\nSampleProjectSubagents=" + (sampleProject?.InternalCount ?? 0);
+			if (!string.IsNullOrWhiteSpace(report))
+			{
+				File.WriteAllText(report, contents, Encoding.UTF8);
+			}
+			return 0;
+		}
+		catch (Exception ex)
+		{
+			if (!string.IsNullOrWhiteSpace(report))
+			{
+				File.WriteAllText(report, "FAIL\r\n" + ex, Encoding.UTF8);
+			}
+			return 1;
+		}
+	}
+
+	private static string RunPresentationDataTest()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "codex-migrator-presentation-test-" + Guid.NewGuid().ToString("N"));
+		try
+		{
+			string project = Path.Combine(root, "project");
+			Directory.CreateDirectory(Path.Combine(project, "nested"));
+			File.WriteAllBytes(Path.Combine(project, "one.bin"), new byte[1024]);
+			File.WriteAllBytes(Path.Combine(project, "nested", "two.bin"), new byte[2048]);
+			ProjectStorageSummary metrics = ProjectStorageMetrics.Measure(project);
+			if (metrics.TotalBytes != 3072L || metrics.FileCount != 2 || metrics.DirectoryCount != 1)
+			{
+				throw new InvalidDataException("project storage metric test failed");
+			}
+
+			string sessionPath = Path.Combine(root, "subagent.jsonl");
+			string ambient = "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"<environment_context><cwd>C:\\\\work</cwd></environment_context>\"}]}}";
+			string prompt = "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"检查导入文件并生成迁移方案\"}]}}";
+			File.WriteAllText(sessionPath, ambient + Environment.NewLine + prompt + Environment.NewLine, Encoding.UTF8);
+			string title = ConversationReader.ReadTitleCandidate(sessionPath);
+			if (!string.Equals(title, "检查导入文件并生成迁移方案", StringComparison.Ordinal))
+			{
+				throw new InvalidDataException("subagent title extraction test failed");
+			}
+			string driveIndexPath = TextHelpers.ToCodexIndexPath(@"D:\test");
+			if (!string.Equals(driveIndexPath, @"\\?\D:\test", StringComparison.OrdinalIgnoreCase) ||
+				!string.Equals(TextHelpers.ToCodexIndexPath(driveIndexPath), driveIndexPath, StringComparison.OrdinalIgnoreCase))
+			{
+				throw new InvalidDataException("Codex drive index path normalization test failed");
+			}
+			string uncIndexPath = TextHelpers.ToCodexIndexPath(@"\\server\share\project");
+			if (!string.Equals(uncIndexPath, @"\\?\UNC\server\share\project", StringComparison.OrdinalIgnoreCase) ||
+				!string.Equals(TextHelpers.CanonicalPath(uncIndexPath), TextHelpers.CanonicalPath(@"\\server\share\project"), StringComparison.OrdinalIgnoreCase))
+			{
+				throw new InvalidDataException("Codex UNC index path normalization test failed");
+			}
+
+			return "ProjectSize=3072B+2files · SubagentTitle=meaningful-user-prompt · SessionPath+Size=visible · CodexIndexPath=drive+unc+idempotent";
+		}
+		finally
+		{
+			try
+			{
+				if (Directory.Exists(root))
+				{
+					Directory.Delete(root, recursive: true);
+				}
+			}
+			catch
+			{
+			}
+		}
+	}
+
+	private static int RunBundleTestLegacy(string cct, string threadId, string output)
+	{
+		try
+		{
+			if (string.IsNullOrWhiteSpace(cct))
+			{
+				throw new FileNotFoundException("cct.exe not found");
+			}
+			CctResult cctResult = CctRunner.Run(cct, new string[3] { "list", "--json", "--include-archived" }, null);
+			if (cctResult.ExitCode != 0)
+			{
+				throw new InvalidOperationException(CctRunner.FirstUseful(cctResult));
+			}
+			List<SessionInfo> cctSessions = CctRunner.ParseSessions(cctResult.StdOut);
+			CatalogResult catalogResult = CodexCatalog.Build(cctSessions);
+			SessionInfo sessionInfo = catalogResult.Projects.SelectMany((ProjectGroup x) => x.Sessions).FirstOrDefault((SessionInfo x) => string.Equals(x.ThreadId, threadId, StringComparison.OrdinalIgnoreCase));
+			if (sessionInfo == null)
+			{
+				throw new InvalidOperationException("thread not found: " + threadId);
+			}
+			ExactBundleWriter.CreateSingleSessionBundle(sessionInfo, output);
+			return 0;
+		}
+		catch
+		{
+			return 1;
+		}
+	}
+
+	private static int RunRenderTestLegacy(string cct, string output)
+	{
+		try
+		{
+			Application application = new Application();
+			application.ShutdownMode = ShutdownMode.OnMainWindowClose;
+			Application application2 = application;
+			MainWindowController controller = new MainWindowController(cct);
+			application2.MainWindow = controller.Window;
+			bool captured = false;
+			controller.Window.ContentRendered += async delegate
+			{
+				if (!captured)
+				{
+					captured = true;
+					await controller.InitialLoadTask;
+					if (!controller.SelectProjectForTest(string.Empty))
+					{
+						throw new InvalidOperationException("project selection did not update the detail pane");
+					}
+					await Task.Delay(350);
+					controller.Window.UpdateLayout();
+					if (!(controller.Window.Content is FrameworkElement visual))
+					{
+						throw new InvalidOperationException("window content unavailable");
+					}
+					int width = Math.Max(1, (int)Math.Ceiling(visual.ActualWidth));
+					int height = Math.Max(1, (int)Math.Ceiling(visual.ActualHeight));
+					RenderTargetBitmap bitmap = new RenderTargetBitmap(width, height, 96.0, 96.0, PixelFormats.Pbgra32);
+					bitmap.Render(visual);
+					PngBitmapEncoder encoder = new PngBitmapEncoder
+					{
+						Frames = { BitmapFrame.Create(bitmap) }
+					};
+					using (FileStream stream = new FileStream(output, FileMode.Create, FileAccess.Write, FileShare.None))
+					{
+						encoder.Save(stream);
+					}
+					controller.Window.Close();
+				}
+			};
+			return application2.Run(controller.Window);
+		}
+		catch
+		{
+			return 1;
+		}
+	}
+
+	private static int RunChromeTestLegacy(string cct, string output)
+	{
+		try
+		{
+			Application application = new Application();
+			application.ShutdownMode = ShutdownMode.OnMainWindowClose;
+			Application application2 = application;
+			MainWindowController controller = new MainWindowController(cct);
+			application2.MainWindow = controller.Window;
+			bool tested = false;
+			controller.Window.ContentRendered += delegate
+			{
+				if (!tested)
+				{
+					tested = true;
+					IntPtr handle = new WindowInteropHelper(controller.Window).Handle;
+					File.WriteAllText(output, ChromeVerifier.Verify(handle), Encoding.UTF8);
+					controller.Window.Close();
+				}
+			};
+			return application2.Run(controller.Window);
+		}
+		catch
+		{
+			return 1;
+		}
+	}
+}
