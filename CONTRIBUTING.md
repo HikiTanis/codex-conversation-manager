@@ -5,10 +5,14 @@ Contributions are welcome. Keep changes focused, preserve the local-first behavi
 ## Development workflow
 
 1. Fork the repository and create a short-lived branch.
-2. Run `.\Get-Cct.ps1` once if `third_party\cct\cct.exe` is absent.
-3. Build with `.\build.ps1`.
-4. Test with `.\test.ps1 -NoBuild`.
-5. Describe behavior changes, safety implications, and manual checks in the pull request.
+2. From the repository root, run the complete build, test, and packaging workflow:
+
+   ```powershell
+   .\package.ps1 -Version 3.0.0
+   ```
+
+   This command fetches and verifies the pinned `cct` dependency when missing, builds the application, runs all automated tests, and creates the release ZIP and checksum under `release/`.
+3. Describe behavior changes, safety implications, and manual checks in the pull request.
 
 ## Rules for fixtures and bug reports
 

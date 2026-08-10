@@ -30,7 +30,3 @@ All notable changes are documented here. The project follows semantic versioning
 - Ensured independently copied conversations use separate files and IDs, so deleting one copy does not remove another.
 - Unified destructive-action dialogs and made recoverable versus permanent operations explicit.
 - Separated subagent records from main conversations so large historical execution contexts can be reviewed and cleaned selectively.
-
-### Removed
-
-- `.cct-bak` as a user-visible backup mode. It remains only as an automatically cleaned import-transaction snapshot.

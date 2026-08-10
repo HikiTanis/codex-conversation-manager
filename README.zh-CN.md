@@ -50,6 +50,38 @@ Codex Conversation Migrator 是一个本地运行的 Windows 桌面工具，用�
 
 > **关于释放 C 盘空间：** 软件回收站位于 Codex 数据目录中，移入回收站主要用于防止误删，并不会明显释放该磁盘空间。确认不再需要记录后，还需从软件回收站永久删除，才会真正释放相应空间。
 
+## 下载与运行（普通用户）
+
+发布包是便携版，无需安装，也不需要 .NET SDK、Targeting Pack 或仓库中的任何 PowerShell 开发脚本。运行环境为 64 位 Windows 10/11，并需要 .NET Framework 4.8 运行库。
+
+1. 从 Releases 下载 `CodexConversationMigrator-Windows-v3.0.0.zip` 和 `SHA256SUMS.txt`。
+2. 将 ZIP 完整解压到一个新文件夹。不要直接在压缩包内运行，并保持 EXE、XAML 和 `cct.exe` 位于同一目录。
+3. 双击 `Start.cmd`；也可以直接运行 `CodexConversationMigrator.exe`。
+4. 升级时请将新版本解压到单独文件夹，不要与旧版文件混放。
+
+## 基本使用
+
+### 创建备份
+
+1. 打开“备份对话”，选择“项目＋对话”或“仅对话”。
+2. 勾选要备份的项目或主对话；可以跨多个项目连续选择。
+3. 选择备份保存目录，创建 `.codexproject` 或 `.codexchat`。
+
+### 恢复或迁移
+
+1. 打开“导入备份”，选择备份文件。
+2. 导入 `.codexchat` 时，为每个项目选择实际目录；导入 `.codexproject` 时，选择项目文件的还原位置。
+3. 希望以后继续合并同源对话时使用“按原始编号合并”；希望副本完全独立时使用“作为新对话复制”。
+4. 先执行“检查（不写入）”；检查通过后完全退出 Codex，再开始正式导入。
+5. 重新打开 Codex 和目标项目，确认对话已显示在该项目下。
+
+### 查看与清理
+
+1. 选择项目，然后在“主对话”和“子代理对话”之间切换。
+2. 查看最近更新时间、大小、Thread ID、路径或只读对话内容。
+3. 逐条勾选或使用“全选”，然后点击“删除所选”。
+4. 可能需要恢复时先移入软件回收站；确认不再需要且希望释放空间时再永久删除。
+
 ## 典型工作流
 
 ### 1. 同一台电脑移动或重命名项目
@@ -85,28 +117,17 @@ Codex Conversation Migrator 是一个本地运行的 Windows 桌面工具，用�
 | `.codexproject` | 一个或多个项目目录，以及对应主对话和子代理对话 | 完整迁移项目工作环境 |
 | `.codexpack` / `.codexbundle` | 旧版本兼容格式 | 只用于导入旧备份 |
 
-`.cct-bak` 不是正式备份格式。它只是导入事务中的临时安全快照，成功提交或失败回滚后会自动清理。
-
-## 快速开始
-
-1. 从 Releases 下载 `CodexConversationMigrator-Windows-v3.0.0.zip`，并核对 SHA-256。
-2. 将 ZIP 完整解压到同一个文件夹，不要拆开 EXE、XAML 和 `cct.exe`。
-3. 双击 `Start.cmd` 或 `CodexConversationMigrator.exe`。
-4. 根据需要选择“项目＋对话”或“仅对话”备份。
-5. 导入时先检查；检查通过后完全退出 Codex，再正式写入。
-
-## 源码编译
+## 从源码构建（开发者）
 
 需要 Windows 10/11、.NET SDK 8.x、.NET Framework 4.8 Targeting Pack，以及 PowerShell 5.1 或更高版本。
 
+在仓库根目录只需运行一条命令，即可自动补齐缺少的固定版本组件、编译、测试并生成发布 ZIP：
+
 ```powershell
-.\Get-Cct.ps1
-.\build.ps1
-.\test.ps1 -NoBuild
 .\package.ps1 -Version 3.0.0
 ```
 
-只有开发脚本 `Get-Cct.ps1` 会在缺少组件时下载固定版本的 `cct` v1.2.0，并在使用前校验压缩包和 EXE 的 SHA-256；桌面软件本身不会联网下载依赖。
+`package.ps1` 会自动调用编译和测试脚本。如果缺少 `cct.exe`，编译脚本才会运行 `Get-Cct.ps1`，下载固定版本的 `cct` v1.2.0，并校验压缩包和 EXE 的 SHA-256。完成后的 ZIP 与 `SHA256SUMS.txt` 位于 `release/`；桌面软件本身不会联网下载构建依赖。
 
 ## 隐私与安全
 

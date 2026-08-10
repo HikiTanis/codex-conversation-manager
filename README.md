@@ -50,6 +50,38 @@ After a project is renamed or moved on the same computer, its conversations can 
 
 > **Freeing space on drive C:** the app trash is stored inside the Codex data directory. Moving records there protects against accidental deletion but does not materially reclaim space on that drive. Permanently purge confirmed-unneeded records from the app trash to release their storage.
 
+## Download and run (end users)
+
+The release ZIP is portable: there is no installer, and end users do not need the .NET SDK, targeting pack, or any repository PowerShell script. A 64-bit Windows 10/11 system with the .NET Framework 4.8 runtime is required.
+
+1. Download `CodexConversationMigrator-Windows-v3.0.0.zip` and `SHA256SUMS.txt` from Releases.
+2. Extract the entire ZIP into a new folder. Do not run the application from inside the ZIP, and keep the EXE, XAML, and `cct.exe` together.
+3. Double-click `Start.cmd`; `CodexConversationMigrator.exe` can also be started directly.
+4. When upgrading, extract the new version into a separate folder instead of mixing it with files from an older release.
+
+## Basic usage
+
+### Create a backup
+
+1. Open **Back up conversations** and choose **Projects + conversations** or **Conversations only**.
+2. Select the projects or main conversations to include. Selections can span multiple projects.
+3. Choose the destination folder and create the `.codexproject` or `.codexchat` package.
+
+### Restore or migrate
+
+1. Open **Import backup** and select the backup package.
+2. For `.codexchat`, select each project's actual folder. For `.codexproject`, select where project folders should be restored.
+3. Use **Merge by original ID** to continue the same lineage, or **Copy as new conversations** for independent files and Thread IDs.
+4. Run **Inspect first (no writes)**. After it passes, exit Codex completely and start the import.
+5. Reopen Codex and the destination project, then confirm that the conversations appear under that project.
+
+### Inspect and clean up
+
+1. Select a project, then switch between **Main conversations** and **Subagent conversations**.
+2. Review the latest update time, size, Thread ID, path, or read-only conversation content.
+3. Select individual records or use Select all, then choose **Delete selected**.
+4. Use the app trash when recovery may be needed; permanently purge confirmed-unneeded records when storage must be reclaimed.
+
 ## Typical workflows
 
 ### 1. Rename or move a project on the same computer
@@ -85,17 +117,7 @@ After a project is renamed or moved on the same computer, its conversations can 
 | `.codexproject` | One or more project folders plus linked main and subagent conversations | Complete project-workspace migration |
 | `.codexpack` / `.codexbundle` | Legacy compatibility formats | Importing older backups only |
 
-`.cct-bak` is not a formal user-backup format. It is a temporary import-transaction snapshot that is removed after commit or rollback.
-
-## Quick start
-
-1. Download `CodexConversationMigrator-Windows-v3.0.0.zip` from Releases and verify its SHA-256 value.
-2. Extract the whole ZIP into one folder. Keep the EXE, XAML, and `cct.exe` together.
-3. Run `Start.cmd` or `CodexConversationMigrator.exe`.
-4. Choose Projects + conversations or Conversations only according to the workflow.
-5. Inspect before import; after inspection passes, exit Codex completely and perform the write.
-
-## Build from source
+## Build from source (developers)
 
 Requirements:
 
@@ -104,14 +126,13 @@ Requirements:
 - .NET Framework 4.8 targeting pack
 - PowerShell 5.1 or newer
 
+From the repository root, one command downloads any missing pinned component, builds the application, runs the tests, and creates the release ZIP:
+
 ```powershell
-.\Get-Cct.ps1
-.\build.ps1
-.\test.ps1 -NoBuild
 .\package.ps1 -Version 3.0.0
 ```
 
-`Get-Cct.ps1` downloads the pinned upstream `cct` v1.2.0 Windows release only when it is missing and verifies both the archive and extracted executable with SHA-256. The desktop application itself does not download dependencies.
+`package.ps1` calls the build and test scripts automatically. If `cct.exe` is missing, the build invokes `Get-Cct.ps1`, downloads the pinned upstream `cct` v1.2.0 release, and verifies both the archive and executable with SHA-256. The finished ZIP is written to `release/` together with `SHA256SUMS.txt`. The desktop application itself does not download build dependencies.
 
 ## Privacy and safety
 

@@ -1,6 +1,6 @@
 # Backup formats and import behavior
 
-The application distinguishes user-created backup packages, the app trash, and internal transaction snapshots. They serve different purposes and should not be managed as interchangeable backups.
+The application distinguishes user-created backup packages from the app trash. They serve different purposes and should not be managed as interchangeable backups.
 
 ## Storage types at a glance
 
@@ -9,7 +9,6 @@ The application distinguishes user-created backup packages, the app trash, and i
 | `.codexchat` | Yes | Selected main conversations without project files |
 | `.codexproject` | Yes | One or more project folders plus linked main and subagent conversations |
 | App trash | Through the application | Recoverable removal of conversations; stored inside the Codex data directory |
-| `.cct-bak` | No | Short-lived import transaction snapshot, removed after commit or rollback |
 
 Moving a conversation to the app trash is not the same as creating a formal backup package, and it does not materially reclaim space from the drive containing the Codex data directory. Permanently purging a confirmed-unneeded trash entry releases its stored session data.
 
@@ -50,14 +49,6 @@ Every import creates fresh Thread IDs and independent conversation files. Main/s
 ## Legacy inputs
 
 `.codexpack` and raw `.codexbundle` files remain supported for import compatibility. New user-created backups use `.codexchat` or `.codexproject` so their contents are clear from the extension.
-
-## Temporary transaction snapshots
-
-`.cct-bak` files can be created internally during an import that may replace a local file. They are not formal user backups:
-
-- on success, the transaction commits and removes them;
-- on failure, the transaction restores from them and then removes them;
-- legacy leftovers are moved into a recoverable app-managed location instead of remaining scattered in `sessions`.
 
 ## Project-file conflict modes
 
