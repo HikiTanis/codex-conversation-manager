@@ -122,9 +122,14 @@ internal static class CodexCatalog
 		{
 			value5.Sessions = value5.Sessions.OrderByDescending((SessionInfo x) => x.UpdatedDate).ToList();
 			ApplySubagentLabels(value5);
+			if (value5.MainCount == 0 && value5.InternalCount > 0)
+			{
+				value5.DisplayName = (UiLanguage.IsEnglish ? "Orphaned subagents · " : "孤立子代理 · ") + value5.DisplayName;
+				value5.SortIndex = int.MaxValue;
+			}
 		}
 		catalogResult2.Projects = (from x in dictionary3.Values
-			where x.MainCount > 0
+			where x.MainCount > 0 || x.InternalCount > 0
 			orderby x.SortIndex, x.LastUpdated descending
 			select x).ToList();
 		catalogResult2.MainCount = catalogResult2.Projects.Sum((ProjectGroup x) => x.MainCount);
@@ -270,7 +275,7 @@ internal static class CodexCatalog
 				}
 				if (session.IsSubagent)
 				{
-					session.SubagentPurpose = ConversationReader.ReadTitleCandidate(text);
+					session.SubagentPurpose = ResolveSubagentPurpose(text5, text);
 				}
 				session.MetadataVerified = true;
 				num++;
@@ -301,10 +306,22 @@ internal static class CodexCatalog
 			{
 				mainById.TryGetValue(subagent.ParentThreadId, out parent);
 			}
-			subagent.ParentDisplayTitle = parent?.DisplayTitle ?? "未找到所属主对话";
+			string missingParent = string.IsNullOrWhiteSpace(subagent.ParentThreadId)
+				? UiLanguage.T("未找到所属主对话")
+				: (UiLanguage.IsEnglish ? "Parent conversation no longer exists · " : "父对话已不存在 · ") + subagent.ParentThreadId;
+			subagent.ParentDisplayTitle = parent?.DisplayTitle ?? missingParent;
 			string descriptor = !string.IsNullOrWhiteSpace(subagent.SubagentPurpose) ? subagent.SubagentPurpose : (parent?.DisplayTitle ?? string.Empty);
-			subagent.SubagentDisplayTitle = "子代理对话 " + ordinal + (string.IsNullOrWhiteSpace(descriptor) ? string.Empty : " · " + descriptor);
+			subagent.SubagentDisplayTitle = (UiLanguage.IsEnglish ? "Subagent conversation " : "子代理对话 ") + ordinal + (string.IsNullOrWhiteSpace(descriptor) ? string.Empty : " · " + descriptor);
 		}
+	}
+
+	private static string ResolveSubagentPurpose(string source, string sessionPath)
+	{
+		if ((source ?? string.Empty).IndexOf("guardian", StringComparison.OrdinalIgnoreCase) >= 0)
+		{
+			return UiLanguage.IsEnglish ? "Approval guardian" : "内部审批守卫（guardian）";
+		}
+		return ConversationReader.ReadTitleCandidate(sessionPath);
 	}
 
 	public static string ResolveSessionPath(SessionInfo session)

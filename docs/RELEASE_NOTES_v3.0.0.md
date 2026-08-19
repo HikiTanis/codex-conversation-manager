@@ -23,6 +23,7 @@ Version 3.0.0 expands the original conversation-transfer utility into a local Co
 - Resolve parent-child relationships from rollout metadata and the Codex thread index before deletion. Because parent deletion cascades to spawned descendants, recoverable deletion stages each affected conversation separately in the app trash and permanent deletion discloses the full impact count.
 - Keep rollout files, the SQLite thread index, and Codex desktop thread state synchronized during deletion and restoration.
 - Detect both index orphans and legacy partial deletions. Older candidates are cross-checked against Codex `rollout_not_found` logs and the latest pre-deletion index backup before user review.
+- Keep subagent-only projects visible as **Orphaned subagents**. When a stale parent cannot be removed safely, show the descendant's friendly role, exact Thread ID, parent ID, project path, and JSONL path, then automatically select it for recoverable deletion.
 - Use redesigned dialogs, consistent controls, corrected title-bar buttons, and a proper taskbar icon.
 - Switch between Simplified Chinese and English without restarting.
 - Import legacy `.codexpack` and `.codexbundle` files while creating new backups with clearer extensions.

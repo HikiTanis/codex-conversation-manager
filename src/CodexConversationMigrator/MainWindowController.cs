@@ -1319,6 +1319,12 @@ internal sealed class MainWindowController
 				}
 				else
 				{
+					string[] staleThreadIds = orphanedThreads.Concat(deletedSidebarRemnants).Select((DbThread thread) => thread.Id).Where((string id) => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+					List<LiveDescendantInfo> liveDescendants = await Task.Run(() => ConversationIndexMaintenance.FindLiveDescendants(codexHome, staleThreadIds));
+					HashSet<string> blockedRootIds = new HashSet<string>(liveDescendants.Select((LiveDescendantInfo item) => item.RootThreadId), StringComparer.OrdinalIgnoreCase);
+					List<DbThread> repairableOrphans = orphanedThreads.Where((DbThread thread) => !blockedRootIds.Contains(thread.Id)).ToList();
+					List<DbThread> repairableLegacyRemnants = deletedSidebarRemnants.Where((DbThread thread) => !blockedRootIds.Contains(thread.Id)).ToList();
+					int repairableCount = repairableOrphans.Count + repairableLegacyRemnants.Count;
 					IEnumerable<string> currentPreview = orphanedThreads.Select((DbThread thread) => (UiLanguage.IsEnglish ? "• [Current index] " : "• [当前索引] ") + (string.IsNullOrWhiteSpace(thread.Title) ? thread.Id : thread.Title + " · " + thread.Id));
 					IEnumerable<string> legacyPreview = deletedSidebarRemnants.Select((DbThread thread) => (UiLanguage.IsEnglish ? "• [Legacy deletion] " : "• [旧版删除] ") + (string.IsNullOrWhiteSpace(thread.Title) ? thread.Id : thread.Title + " · " + thread.Id));
 					string itemPreview = string.Join("\n", currentPreview.Concat(legacyPreview).Take(8));
@@ -1329,20 +1335,27 @@ internal sealed class MainWindowController
 					string categorySummary = UiLanguage.IsEnglish
 						? $"Current index remnants: {orphanedThreads.Count}; legacy partial-deletion remnants: {deletedSidebarRemnants.Count}."
 						: $"当前索引残留 {orphanedThreads.Count} 个；旧版半删除残留 {deletedSidebarRemnants.Count} 个。";
+					string blockedSummary = string.Empty;
+					if (liveDescendants.Count > 0)
+					{
+						blockedSummary = UiLanguage.IsEnglish
+							? $"\n\n{blockedRootIds.Count} stale parent tasks still have {liveDescendants.Count} descendant conversations with local files. To avoid cascade deletion, those parent tasks will be left unchanged. " + (repairableCount > 0 ? $"The other {repairableCount} tasks will be cleaned first, then the first descendant will be selected automatically." : "The first descendant will be selected automatically so you can move it to app trash or back it up first.")
+							: $"\n\n其中 {blockedRootIds.Count} 个失效父对话仍关联 {liveDescendants.Count} 个存在本地文件的子代理。为避免官方删除级联误删，这些父记录暂不清理。" + (repairableCount > 0 ? $"确认后会先清理其余 {repairableCount} 个记录，再自动定位并勾选第一条关联子代理。" : "确认后会自动定位并勾选第一条关联子代理，方便你先移入软件回收站或备份。");
+					}
 					string repairPrompt = UiLanguage.IsEnglish
-						? $"Detected {staleSidebarCount} confirmed unreadable sidebar tasks.\n{categorySummary}\n\n{itemPreview}\n\nClean these task-directory records through Codex's official deletion interface? This does not delete project files or any conversation file that still exists."
-						: $"检测到 {staleSidebarCount} 个已确认打不开的侧边栏任务。\n{categorySummary}\n\n{itemPreview}\n\n是否通过 Codex 官方删除接口清理这些任务目录记录？本操作不会删除任何项目文件，也不会删除任何仍存在的会话文件。";
-					MessageBoxResult repairAnswer = AppDialog.ShowCompat(window, repairPrompt, "清理侧边栏失效项", MessageBoxButton.YesNo, MessageBoxImage.Question);
-					if (repairAnswer == MessageBoxResult.Yes)
+						? $"Detected {staleSidebarCount} confirmed unreadable sidebar tasks.\n{categorySummary}\n\n{itemPreview}{blockedSummary}\n\n" + (liveDescendants.Count > 0 ? "Continue with the safe cleanup and descendant location workflow?" : "Clean these task-directory records through Codex's official deletion interface? This does not delete project files or any conversation file that still exists.")
+						: $"检测到 {staleSidebarCount} 个已确认打不开的侧边栏任务。\n{categorySummary}\n\n{itemPreview}{blockedSummary}\n\n" + (liveDescendants.Count > 0 ? "是否继续执行安全清理与子代理定位？" : "是否通过 Codex 官方删除接口清理这些任务目录记录？本操作不会删除任何项目文件，也不会删除任何仍存在的会话文件。");
+					bool repairConfirmed = AppDialog.Confirm(window, "清理侧边栏失效项", "清理侧边栏失效项", repairPrompt, liveDescendants.Count > 0 ? AppDialogTone.Warning : AppDialogTone.Info, liveDescendants.Count > 0 ? (repairableCount > 0 ? "清理并定位" : "定位子代理") : "继续", "取消");
+					if (repairConfirmed)
 					{
 						try
 						{
 							int repairedCount = 0;
 							bool desktopRestarted = false;
 							List<string> backupPaths = new List<string>();
-							if (orphanedThreads.Count > 0)
+							if (repairableOrphans.Count > 0)
 							{
-								OrphanIndexRepairResult currentRepair = await Task.Run(() => ConversationIndexMaintenance.RepairSelectedOrphans(codexHome, orphanedThreads.Select((DbThread thread) => thread.Id)));
+								OrphanIndexRepairResult currentRepair = await Task.Run(() => ConversationIndexMaintenance.RepairSelectedOrphans(codexHome, repairableOrphans.Select((DbThread thread) => thread.Id)));
 								repairedCount += currentRepair.RepairedCount;
 								desktopRestarted |= currentRepair.DesktopRunning;
 								if (!string.IsNullOrWhiteSpace(currentRepair.IndexBackupPath))
@@ -1350,9 +1363,9 @@ internal sealed class MainWindowController
 									backupPaths.Add(currentRepair.IndexBackupPath);
 								}
 							}
-							if (!desktopRestarted && deletedSidebarRemnants.Count > 0)
+							if (!desktopRestarted && repairableLegacyRemnants.Count > 0)
 							{
-								OrphanIndexRepairResult legacyRepair = await Task.Run(() => ConversationIndexMaintenance.RepairDeletedSidebarRemnants(codexHome, deletedSidebarRemnants.Select((DbThread thread) => thread.Id)));
+								OrphanIndexRepairResult legacyRepair = await Task.Run(() => ConversationIndexMaintenance.RepairDeletedSidebarRemnants(codexHome, repairableLegacyRemnants.Select((DbThread thread) => thread.Id)));
 								repairedCount += legacyRepair.RepairedCount;
 								desktopRestarted |= legacyRepair.DesktopRunning;
 								if (!string.IsNullOrWhiteSpace(legacyRepair.IndexBackupPath))
@@ -1364,6 +1377,18 @@ internal sealed class MainWindowController
 							{
 								orphanSummary = " · Codex 已重新启动，未清理失效项";
 								orphanError = true;
+							}
+							else if (liveDescendants.Count > 0)
+							{
+								bool focused = FocusLiveDescendant(liveDescendants);
+								orphanSummary = UiLanguage.IsEnglish ? $" · Cleaned {repairedCount}; {blockedRootIds.Count} parent tasks await descendant handling" : $" · 已清理 {repairedCount} 个；{blockedRootIds.Count} 个父记录需先处理子代理";
+								orphanError = true;
+								string descendantDetails = string.Join("\n\n", liveDescendants.Take(8).Select((LiveDescendantInfo item) => "• " + item.Title + "\n  Thread ID: " + item.ThreadId + "\n  " + (UiLanguage.IsEnglish ? "Parent: " : "父对话：") + item.RootThreadId + "\n  " + (UiLanguage.IsEnglish ? "Project: " : "项目：") + item.Cwd + "\n  " + (UiLanguage.IsEnglish ? "File: " : "文件：") + item.RolloutPath));
+								string descendantGuide = UiLanguage.IsEnglish
+									? (focused ? "The application has switched to the orphaned-subagents project, opened the Subagents tab, searched for the exact Thread ID, and selected the first item. Close this dialog, click Delete selected, and choose app trash. Refresh again afterward to clean the remaining parent task." : "The descendant could not be selected automatically. Use its exact Thread ID below in the Subagents search, move it to app trash, then refresh again.") + "\n\n" + descendantDetails
+									: (focused ? "软件已经自动切换到“孤立子代理”项目和“子代理”页，按准确 Thread ID 搜索并勾选了第一条。关闭提示后直接点击“删除所选”，选择“移入软件回收站”；完成后再次刷新，即可清理剩余父记录。" : "软件未能自动选中该子代理。请在“子代理”页使用下面的准确 Thread ID 搜索，先移入软件回收站，再次刷新。") + "\n\n" + descendantDetails;
+								AppendLog(UiLanguage.IsEnglish ? $"Deferred {blockedRootIds.Count} stale parent tasks and located {liveDescendants.Count} live descendants." : $"暂缓清理 {blockedRootIds.Count} 个失效父记录，已定位 {liveDescendants.Count} 个仍存在的子代理。");
+								AppDialog.ShowCompat(window, descendantGuide, UiLanguage.IsEnglish ? "Descendant located" : "已定位关联子代理", MessageBoxButton.OK, MessageBoxImage.Warning);
 							}
 							else
 							{
@@ -1378,7 +1403,9 @@ internal sealed class MainWindowController
 							orphanSummary = " · 侧边栏失效项清理失败，详见操作记录";
 							orphanError = true;
 							AppendLog("清理侧边栏失效项失败：" + repairError.Message);
-							AppDialog.ShowCompat(window, repairError.Message, "清理失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+							bool focused = repairError is LiveDescendantRepairException liveError && FocusLiveDescendant(liveError.Descendants);
+							string repairMessage = repairError.Message + (focused ? (UiLanguage.IsEnglish ? "\n\nThe first descendant was selected automatically in the Subagents view." : "\n\n软件已在“子代理”页自动定位并勾选第一条记录。") : string.Empty);
+							AppDialog.ShowCompat(window, repairMessage, "清理失败", MessageBoxButton.OK, MessageBoxImage.Warning);
 						}
 					}
 					else
@@ -1435,6 +1462,10 @@ internal sealed class MainWindowController
 			if (ReferenceEquals(project, selectedProject))
 			{
 				projectSizeText.Text = project.ProjectStorageSummary;
+			}
+			if (project.IsSubagentOnly)
+			{
+				return;
 			}
 			ProjectStorageSummary summary = await Task.Run(() => ProjectStorageMetrics.Measure(project.ProjectPath));
 			project.CompleteStorageScan(summary);
@@ -1493,6 +1524,33 @@ internal sealed class MainWindowController
 			(sessionInfo.ThreadId ?? string.Empty).IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0 ||
 			(sessionInfo.DisplayPath ?? string.Empty).IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0 ||
 			(sessionInfo.ParentDisplayTitle ?? string.Empty).IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0;
+	}
+
+	private bool FocusLiveDescendant(IEnumerable<LiveDescendantInfo> descendants)
+	{
+		HashSet<string> ids = new HashSet<string>((descendants ?? Enumerable.Empty<LiveDescendantInfo>()).Select((LiveDescendantInfo item) => item.ThreadId).Where((string id) => !string.IsNullOrWhiteSpace(id)), StringComparer.OrdinalIgnoreCase);
+		if (ids.Count == 0)
+		{
+			return false;
+		}
+		ProjectGroup targetProject = projects.FirstOrDefault((ProjectGroup project) => (project.Sessions ?? new List<SessionInfo>()).Any((SessionInfo session) => session.IsSubagent && ids.Contains(session.ThreadId)));
+		SessionInfo targetSession = targetProject?.Sessions?.FirstOrDefault((SessionInfo session) => session.IsSubagent && ids.Contains(session.ThreadId));
+		if (targetProject == null || targetSession == null)
+		{
+			return false;
+		}
+		foreach (SessionInfo session in projects.SelectMany((ProjectGroup project) => project.Sessions ?? new List<SessionInfo>()).Where((SessionInfo session) => session.IsSubagent))
+		{
+			session.IsSelected = ReferenceEquals(session, targetSession);
+		}
+		projectList.SelectedItem = targetProject;
+		projectList.ScrollIntoView(targetProject);
+		subagentSessionsTabRadio.IsChecked = true;
+		showSubagentSessions = true;
+		searchBox.Text = targetSession.ThreadId;
+		UpdateSessionTypeView();
+		sessionList.ScrollIntoView(targetSession);
+		return true;
 	}
 
 	private void UpdateSessionTypeView()

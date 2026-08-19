@@ -257,25 +257,32 @@ internal static class ConversationIndexMaintenance
 		}
 	}
 
-	private static void EnsureNoLiveDescendants(string codexHome, string rootThreadId)
+	public static List<LiveDescendantInfo> FindLiveDescendants(string codexHome, IEnumerable<string> rootThreadIds)
 	{
+		string[] roots = (rootThreadIds ?? Enumerable.Empty<string>()).Where((string id) => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 		string databasePath = WinSqliteMaintenance.FindActiveDatabase(codexHome);
-		if (string.IsNullOrWhiteSpace(databasePath) || !File.Exists(databasePath) || string.IsNullOrWhiteSpace(rootThreadId))
+		if (string.IsNullOrWhiteSpace(databasePath) || !File.Exists(databasePath) || roots.Length == 0)
 		{
-			return;
+			return new List<LiveDescendantInfo>();
 		}
 		List<DbThread> threads = WinSqliteReader.ReadThreads(databasePath);
 		Dictionary<string, string> parentByChild = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		Dictionary<string, ThreadHeaderInfo> headerByThread = new Dictionary<string, ThreadHeaderInfo>(StringComparer.OrdinalIgnoreCase);
 		Dictionary<string, DbThread> byId = threads.Where((DbThread item) => item != null && !string.IsNullOrWhiteSpace(item.Id)).GroupBy((DbThread item) => item.Id, StringComparer.OrdinalIgnoreCase).ToDictionary((IGrouping<string, DbThread> group) => group.Key, (IGrouping<string, DbThread> group) => group.First(), StringComparer.OrdinalIgnoreCase);
 		foreach (DbThread thread in byId.Values)
 		{
 			string parentId = thread.ParentThreadId;
 			string rolloutPath = TextHelpers.StripExtendedPrefix(thread.RolloutPath);
-			if (string.IsNullOrWhiteSpace(parentId) && !string.IsNullOrWhiteSpace(rolloutPath) && File.Exists(rolloutPath))
+			if (!string.IsNullOrWhiteSpace(rolloutPath) && File.Exists(rolloutPath))
 			{
 				try
 				{
-					parentId = TargetedThreadIndexer.ReadMetadataForIndexing(rolloutPath, thread.Title, thread.Title).ParentThreadId;
+					ThreadHeaderInfo header = ReadThreadHeader(rolloutPath);
+					headerByThread[thread.Id] = header;
+					if (!string.IsNullOrWhiteSpace(header.ParentThreadId))
+					{
+						parentId = header.ParentThreadId;
+					}
 				}
 				catch
 				{
@@ -286,25 +293,143 @@ internal static class ConversationIndexMaintenance
 				parentByChild[thread.Id] = parentId;
 			}
 		}
-		HashSet<string> descendants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-		Queue<string> pending = new Queue<string>();
-		pending.Enqueue(rootThreadId);
-		while (pending.Count > 0)
+		Dictionary<string, List<string>> childrenByParent = parentByChild.GroupBy((KeyValuePair<string, string> relation) => relation.Value, StringComparer.OrdinalIgnoreCase).ToDictionary((IGrouping<string, KeyValuePair<string, string>> group) => group.Key, (IGrouping<string, KeyValuePair<string, string>> group) => group.Select((KeyValuePair<string, string> relation) => relation.Key).ToList(), StringComparer.OrdinalIgnoreCase);
+		List<LiveDescendantInfo> result = new List<LiveDescendantInfo>();
+		foreach (string rootThreadId in roots)
 		{
-			string parentId = pending.Dequeue();
-			foreach (KeyValuePair<string, string> relation in parentByChild.Where((KeyValuePair<string, string> relation) => string.Equals(relation.Value, parentId, StringComparison.OrdinalIgnoreCase)).ToArray())
+			HashSet<string> descendants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			Queue<string> pending = new Queue<string>();
+			pending.Enqueue(rootThreadId);
+			while (pending.Count > 0)
 			{
-				if (descendants.Add(relation.Key))
+				string parentId = pending.Dequeue();
+				if (!childrenByParent.TryGetValue(parentId, out List<string> children))
 				{
-					pending.Enqueue(relation.Key);
+					continue;
+				}
+				foreach (string childId in children)
+				{
+					if (descendants.Add(childId))
+					{
+						pending.Enqueue(childId);
+					}
+				}
+			}
+			foreach (string descendantId in descendants)
+			{
+				if (!byId.TryGetValue(descendantId, out DbThread thread))
+				{
+					continue;
+				}
+				string rolloutPath = TextHelpers.StripExtendedPrefix(thread.RolloutPath);
+				if (string.IsNullOrWhiteSpace(rolloutPath) || !File.Exists(rolloutPath))
+				{
+					continue;
+				}
+				headerByThread.TryGetValue(descendantId, out ThreadHeaderInfo header);
+				bool guardian = (thread.Source ?? string.Empty).IndexOf("guardian", StringComparison.OrdinalIgnoreCase) >= 0 || (header?.Source ?? string.Empty).IndexOf("guardian", StringComparison.OrdinalIgnoreCase) >= 0;
+				result.Add(new LiveDescendantInfo
+				{
+					RootThreadId = rootThreadId,
+					ThreadId = descendantId,
+					Title = guardian ? (UiLanguage.IsEnglish ? "Approval guardian" : "内部审批守卫（guardian）") : TextHelpers.CleanLine(thread.Title, 160, UiLanguage.T("子代理对话")),
+					Cwd = TextHelpers.StripExtendedPrefix(thread.Cwd),
+					RolloutPath = rolloutPath
+				});
+			}
+		}
+		return result.GroupBy((LiveDescendantInfo item) => item.RootThreadId + "|" + item.ThreadId, StringComparer.OrdinalIgnoreCase).Select((IGrouping<string, LiveDescendantInfo> group) => group.First()).OrderBy((LiveDescendantInfo item) => item.Cwd).ThenBy((LiveDescendantInfo item) => item.Title).ToList();
+	}
+
+	private static void EnsureNoLiveDescendants(string codexHome, string rootThreadId)
+	{
+		List<LiveDescendantInfo> liveDescendants = FindLiveDescendants(codexHome, new string[1] { rootThreadId });
+		if (liveDescendants.Count > 0)
+		{
+			string details = string.Join("\n\n", liveDescendants.Take(8).Select((LiveDescendantInfo item) => "• " + item.Title + "\n  Thread ID: " + item.ThreadId + "\n  " + (UiLanguage.IsEnglish ? "Parent: " : "父对话：") + item.RootThreadId + "\n  " + (UiLanguage.IsEnglish ? "Project: " : "项目：") + item.Cwd + "\n  " + (UiLanguage.IsEnglish ? "File: " : "文件：") + item.RolloutPath));
+			string message = UiLanguage.IsEnglish
+				? "This stale parent conversation still has " + liveDescendants.Count + " descendant conversations with local files. Repair stopped before Codex could cascade-delete them. Move these descendants to app trash or back them up first.\n\n" + details
+				: "该失效父对话仍关联 " + liveDescendants.Count + " 个存在本地文件的子代理。为防止 Codex 官方删除级联清除这些记录，本次侧边栏修复已停止。请先将这些子代理移入软件回收站或另行备份。\n\n" + details;
+			throw new LiveDescendantRepairException(message, liveDescendants);
+		}
+	}
+
+	private static ThreadHeaderInfo ReadThreadHeader(string path)
+	{
+		using FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+		using StreamReader reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, 8192);
+		string firstLine = reader.ReadLine();
+		Dictionary<string, object> root = string.IsNullOrWhiteSpace(firstLine) ? null : CctRunner.NewSerializer().DeserializeObject(firstLine) as Dictionary<string, object>;
+		Dictionary<string, object> payload = root != null && root.TryGetValue("payload", out object payloadValue) ? payloadValue as Dictionary<string, object> : null;
+		if (payload == null)
+		{
+			return new ThreadHeaderInfo();
+		}
+		string id = HeaderValue(payload, "id");
+		string sessionId = HeaderValue(payload, "session_id");
+		string parentId = HeaderValue(payload, "parent_thread_id");
+		object sourceValue = payload.TryGetValue("source", out object rawSource) ? rawSource : null;
+		if (string.IsNullOrWhiteSpace(parentId))
+		{
+			parentId = FindNestedHeaderValue(sourceValue, "parent_thread_id", 0);
+		}
+		string threadSource = HeaderValue(payload, "thread_source");
+		if (string.IsNullOrWhiteSpace(parentId) && string.Equals(threadSource, "subagent", StringComparison.OrdinalIgnoreCase) && !string.Equals(sessionId, id, StringComparison.OrdinalIgnoreCase))
+		{
+			parentId = sessionId;
+		}
+		return new ThreadHeaderInfo
+		{
+			ParentThreadId = parentId,
+			Source = sourceValue == null ? string.Empty : CctRunner.NewSerializer().Serialize(sourceValue)
+		};
+	}
+
+	private static string HeaderValue(Dictionary<string, object> source, string key)
+	{
+		return source != null && source.TryGetValue(key, out object value) && value != null ? Convert.ToString(value) ?? string.Empty : string.Empty;
+	}
+
+	private static string FindNestedHeaderValue(object value, string key, int depth)
+	{
+		if (value == null || depth > 12)
+		{
+			return string.Empty;
+		}
+		if (value is Dictionary<string, object> dictionary)
+		{
+			if (dictionary.TryGetValue(key, out object direct) && direct != null)
+			{
+				return Convert.ToString(direct) ?? string.Empty;
+			}
+			foreach (object nested in dictionary.Values)
+			{
+				string found = FindNestedHeaderValue(nested, key, depth + 1);
+				if (!string.IsNullOrWhiteSpace(found))
+				{
+					return found;
 				}
 			}
 		}
-		List<DbThread> liveDescendants = descendants.Where(byId.ContainsKey).Select((string id) => byId[id]).Where((DbThread thread) => !string.IsNullOrWhiteSpace(thread.RolloutPath) && File.Exists(TextHelpers.StripExtendedPrefix(thread.RolloutPath))).ToList();
-		if (liveDescendants.Count > 0)
+		else if (value is object[] array)
 		{
-			throw new InvalidOperationException("该失效主对话仍关联 " + liveDescendants.Count + " 个存在本地文件的子代理。为防止 Codex 官方删除级联清除这些记录，本次侧边栏修复已停止。请先在主界面将关联子代理移入软件回收站或另行备份。\n\n" + string.Join("\n", liveDescendants.Take(5).Select((DbThread thread) => thread.Id)));
+			foreach (object nested in array)
+			{
+				string found = FindNestedHeaderValue(nested, key, depth + 1);
+				if (!string.IsNullOrWhiteSpace(found))
+				{
+					return found;
+				}
+			}
 		}
+		return string.Empty;
+	}
+
+	private sealed class ThreadHeaderInfo
+	{
+		public string ParentThreadId { get; set; }
+
+		public string Source { get; set; }
 	}
 
 	private static string ValidateMissingSessionPath(string codexHome, DbThread thread)

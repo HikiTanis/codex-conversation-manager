@@ -149,6 +149,10 @@ internal static class UiEnglishCatalog4
 		{ "无法只读打开 Codex 索引：", "The Codex index could not be opened read-only: " },
 
 		{ "清理侧边栏失效项", "Clean up stale sidebar entries" },
+		{ "清理并定位", "Clean and locate" },
+		{ "定位子代理", "Locate subagent" },
+		{ "已定位关联子代理", "Related subagent located" },
+		{ "孤立子代理：不统计项目文件", "Orphaned subagents: project files are not measured" },
 		{ "检测侧边栏失效项失败：", "Failed to detect stale sidebar entries: " },
 		{ "检测到侧边栏失效项 ", "Detected stale sidebar entries: " },
 		{ " 个（完全退出 Codex 后点击刷新可处理）", " (exit Codex completely, then click Refresh to review them)" },

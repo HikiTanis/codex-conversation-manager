@@ -51,6 +51,7 @@ After a project is renamed or moved on the same computer, its conversations can 
 - Optionally processes the related project folder when deleting a main conversation.
 - Moves a project folder to the Windows Recycle Bin or permanently deletes it after explicit confirmation.
 - Repairs both index orphans and older partial deletions where the file and current index row are already gone but Codex still shows the task. Legacy candidates must be confirmed by both a recent Codex `rollout_not_found` log and the latest pre-deletion index backup before they are offered for review.
+- Shows surviving descendants whose parent conversation is gone in an **Orphaned subagents** project instead of hiding the project. During stale-parent repair, safe records are handled first; the application then switches to the correct project, opens the Subagents view, searches the exact Thread ID, and selects the blocking descendant. Move it to app trash and refresh again to finish the parent cleanup.
 
 > **Freeing space on drive C:** the app trash is stored inside the Codex data directory. Moving records there protects against accidental deletion but does not materially reclaim space on that drive. Permanently purge confirmed-unneeded records from the app trash to release their storage.
 

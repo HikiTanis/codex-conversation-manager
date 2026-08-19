@@ -38,11 +38,13 @@ internal sealed class ProjectGroup : NotifyObject
 		}
 	}
 
-	public bool CanBackupFiles => !string.IsNullOrWhiteSpace(ProjectPath) && System.IO.Directory.Exists(ProjectPath);
+	public bool IsSubagentOnly => MainCount == 0 && InternalCount > 0;
+
+	public bool CanBackupFiles => !IsSubagentOnly && !string.IsNullOrWhiteSpace(ProjectPath) && System.IO.Directory.Exists(ProjectPath);
 
 	public bool StorageScanStarted => storageScanStarted;
 
-	public string ProjectStorageSummary => projectStorageSummary;
+	public string ProjectStorageSummary => IsSubagentOnly ? UiLanguage.T("孤立子代理：不统计项目文件") : projectStorageSummary;
 
 	public void BeginStorageScan()
 	{
@@ -51,6 +53,12 @@ internal sealed class ProjectGroup : NotifyObject
 			return;
 		}
 		storageScanStarted = true;
+		if (IsSubagentOnly)
+		{
+			projectStorageSummary = UiLanguage.T("孤立子代理：不统计项目文件");
+			RaisePropertyChanged("ProjectStorageSummary");
+			return;
+		}
 		projectStorageSummary = UiLanguage.T("项目文件：正在统计……");
 		RaisePropertyChanged("ProjectStorageSummary");
 	}

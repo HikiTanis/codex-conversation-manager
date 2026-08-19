@@ -1109,13 +1109,7 @@ internal static class Program
 			{
 				{
 					"subagent",
-					new Dictionary<string, object>
-					{
-						{
-							"thread_spawn",
-							new Dictionary<string, object> { { "parent_thread_id", guardedParentId } }
-						}
-					}
+					new Dictionary<string, object> { { "other", "guardian" } }
 				}
 			};
 			File.WriteAllText(guardedParentPath, fixtureContents.Replace(testThreadId, guardedParentId).Replace("真正的问题", "失效主对话子代理保护测试"), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
@@ -1123,16 +1117,40 @@ internal static class Program
 			TargetedThreadIndexer.IndexSessionFile(text, guardedParentPath, "失效主对话子代理保护测试", "失效主对话子代理保护测试");
 			TargetedThreadIndexer.IndexSessionFile(text, guardedChildPath, "仍存子代理", "仍存子代理");
 			File.Delete(guardedParentPath);
+			List<LiveDescendantInfo> locatedDescendants = ConversationIndexMaintenance.FindLiveDescendants(text, new string[1] { guardedParentId });
+			if (locatedDescendants.Count != 1 || !string.Equals(locatedDescendants[0].ThreadId, guardedChildId, StringComparison.OrdinalIgnoreCase) || !string.Equals(locatedDescendants[0].RootThreadId, guardedParentId, StringComparison.OrdinalIgnoreCase) || !string.Equals(TextHelpers.CanonicalPath(locatedDescendants[0].RolloutPath), TextHelpers.CanonicalPath(guardedChildPath), StringComparison.OrdinalIgnoreCase) || locatedDescendants[0].Title.IndexOf(UiLanguage.IsEnglish ? "guardian" : "审批守卫", StringComparison.OrdinalIgnoreCase) < 0)
+			{
+				throw new InvalidOperationException("live descendant location did not return the exact parent, title, Thread ID, and path");
+			}
+			CatalogResult orphanSubagentCatalog = CodexCatalog.Build(new List<SessionInfo>
+			{
+				new SessionInfo
+				{
+					ThreadId = guardedChildId,
+					SessionPath = guardedChildPath,
+					Cwd = newProject,
+					Title = "仍存子代理",
+					Preview = "仍存子代理",
+					IsSubagent = true,
+					ParentThreadId = guardedParentId,
+					UpdatedDate = new DateTime(2026, 1, 7, 3, 5, 6, DateTimeKind.Utc)
+				}
+			});
+			ProjectGroup orphanSubagentProject = orphanSubagentCatalog.Projects.Single();
+			if (!orphanSubagentProject.IsSubagentOnly || orphanSubagentProject.MainCount != 0 || orphanSubagentProject.InternalCount != 1 || orphanSubagentProject.CanBackupFiles || orphanSubagentProject.DisplayName.IndexOf(UiLanguage.IsEnglish ? "Orphaned subagents" : "孤立子代理", StringComparison.OrdinalIgnoreCase) < 0 || orphanSubagentProject.Sessions[0].DisplayTitle.IndexOf(UiLanguage.IsEnglish ? "Approval guardian" : "内部审批守卫", StringComparison.OrdinalIgnoreCase) < 0)
+			{
+				throw new InvalidOperationException("orphaned subagent was not exposed as a manageable, non-project-backup group");
+			}
 			bool liveDescendantGuarded = false;
 			try
 			{
 				ConversationIndexMaintenance.RepairSelectedOrphans(text, new string[1] { guardedParentId });
 			}
-			catch (InvalidOperationException ex)
+			catch (LiveDescendantRepairException ex)
 			{
-				liveDescendantGuarded = ex.Message.IndexOf("仍关联", StringComparison.Ordinal) >= 0;
+				liveDescendantGuarded = ex.Descendants.Count == 1 && string.Equals(ex.Descendants[0].ThreadId, guardedChildId, StringComparison.OrdinalIgnoreCase);
 			}
-			if (!liveDescendantGuarded || !File.Exists(guardedChildPath) || !WinSqliteReader.ReadThreads(databasePath).Any((DbThread item) => string.Equals(item.Id, guardedParentId, StringComparison.OrdinalIgnoreCase) || string.Equals(item.Id, guardedChildId, StringComparison.OrdinalIgnoreCase)) || officialDeletes.Any((string id) => string.Equals(id, guardedParentId, StringComparison.OrdinalIgnoreCase)))
+			if (!liveDescendantGuarded || !File.Exists(guardedChildPath) || WinSqliteReader.ReadThreads(databasePath).Count((DbThread item) => string.Equals(item.Id, guardedParentId, StringComparison.OrdinalIgnoreCase) || string.Equals(item.Id, guardedChildId, StringComparison.OrdinalIgnoreCase)) != 2 || officialDeletes.Any((string id) => string.Equals(id, guardedParentId, StringComparison.OrdinalIgnoreCase)))
 			{
 				throw new InvalidOperationException("stale-sidebar repair did not stop before cascading into a live descendant");
 			}
@@ -1393,7 +1411,7 @@ internal static class Program
 			{
 				throw new InvalidOperationException("project payload traversal guard test failed");
 			}
-			return "ImportModes=origin-merge+independent-copy · SamePathMap=skipped · FormalBackup=.codexchat+.codexproject+legacy · CctBak=rollback+commit+delete+legacy-trash · Lineage=origin-persist+project-scope+parent-child+fresh-every-time+ambiguity-guard · IndependentCopy=retained+delete-isolated · TargetedIndex=insert+update+two-project-cwd+native-path+visibility · DesktopProjectState=existing-remap+create+multi-project+backup+verify · BackupPrewrite=OK · BackfillUnchanged=complete · PendingRunningGuard=OK · ZstdPreflight=OK · Preview=2 messages · Trash=copy+official-delete+index-remove+list+index-restore+purge+descendant-staging · PermanentDelete=official-delete+index-remove+descendant-cascade · OfficialDeleteRefusal=preserves-local-data · StaleSidebar=current+log-confirmed-legacy+official-repair+ledger+live-descendant-guard · ProjectGuard+Permanent=OK · ProjectPayload=schema5+two-targets+target-guard+combined-pack+create+inspect+restore+skip+backup+traversal-guard · ResizeGrips=8";
+			return "ImportModes=origin-merge+independent-copy · SamePathMap=skipped · FormalBackup=.codexchat+.codexproject+legacy · CctBak=rollback+commit+delete+legacy-trash · Lineage=origin-persist+project-scope+parent-child+fresh-every-time+ambiguity-guard · IndependentCopy=retained+delete-isolated · TargetedIndex=insert+update+two-project-cwd+native-path+visibility · DesktopProjectState=existing-remap+create+multi-project+backup+verify · BackupPrewrite=OK · BackfillUnchanged=complete · PendingRunningGuard=OK · ZstdPreflight=OK · Preview=2 messages · Trash=copy+official-delete+index-remove+list+index-restore+purge+descendant-staging · PermanentDelete=official-delete+index-remove+descendant-cascade · OfficialDeleteRefusal=preserves-local-data · StaleSidebar=current+log-confirmed-legacy+official-repair+ledger+live-descendant-guard+orphan-subagent-visible+exact-location · ProjectGuard+Permanent=OK · ProjectPayload=schema5+two-targets+target-guard+combined-pack+create+inspect+restore+skip+backup+traversal-guard · ResizeGrips=8";
 		}
 		finally
 		{
