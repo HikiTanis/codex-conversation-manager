@@ -371,7 +371,20 @@ internal static class TargetedThreadIndexer
 		threadIndexMetadata.UpdatedAtMilliseconds = EpochMilliseconds(dateTime3);
 		threadIndexMetadata.Source = text3;
 		threadIndexMetadata.ThreadSource = (string.IsNullOrWhiteSpace(text4) ? null : text4);
-		threadIndexMetadata.ParentThreadId = FindNestedString(value2, "parent_thread_id");
+		string parentThreadId = Value(dictionary, "parent_thread_id");
+		if (string.IsNullOrWhiteSpace(parentThreadId))
+		{
+			parentThreadId = FindNestedString(value2, "parent_thread_id");
+		}
+		if (string.IsNullOrWhiteSpace(parentThreadId) && string.Equals(text4, "subagent", StringComparison.OrdinalIgnoreCase))
+		{
+			string legacyParentId = Value(dictionary, "session_id");
+			if (!string.Equals(legacyParentId, text2, StringComparison.OrdinalIgnoreCase))
+			{
+				parentThreadId = legacyParentId;
+			}
+		}
+		threadIndexMetadata.ParentThreadId = parentThreadId;
 		threadIndexMetadata.ModelProvider = Default(Value(dictionary, "model_provider"), "openai");
 		threadIndexMetadata.Cwd = TextHelpers.ToCodexIndexPath(Value(dictionary, "cwd"));
 		threadIndexMetadata.CliVersion = Value(dictionary, "cli_version");

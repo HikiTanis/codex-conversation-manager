@@ -1243,6 +1243,7 @@ internal sealed class MainWindowController
 		{
 			string codexHome = CodexCatalog.ResolveCodexHome();
 			List<DbThread> orphanedThreads = new List<DbThread>();
+			List<DbThread> deletedSidebarRemnants = new List<DbThread>();
 			string orphanDetectionError = string.Empty;
 			try
 			{
@@ -1252,6 +1253,15 @@ internal sealed class MainWindowController
 			{
 				orphanDetectionError = detectionError.Message;
 				AppendLog("检测侧边栏失效项失败：" + detectionError.Message);
+			}
+			try
+			{
+				deletedSidebarRemnants = await Task.Run(() => ConversationIndexMaintenance.FindDeletedSidebarRemnants(codexHome));
+			}
+			catch (Exception detectionError)
+			{
+				orphanDetectionError = string.IsNullOrWhiteSpace(orphanDetectionError) ? detectionError.Message : orphanDetectionError + "；" + detectionError.Message;
+				AppendLog("检测旧版删除的侧边栏残留失败：" + detectionError.Message);
 			}
 			LegacyCctBackupMigrationResult legacyBackups = new LegacyCctBackupMigrationResult();
 			if (Environment.GetEnvironmentVariable("CODEX_MIGRATOR_SKIP_LEGACY_CCT_MAINTENANCE") != "1")
@@ -1300,34 +1310,67 @@ internal sealed class MainWindowController
 			string cleanupSummary = legacyBackups.MovedToTrashCount == 0 ? string.Empty : $" · 旧版快照已转入回收站 {legacyBackups.MovedToTrashCount} 个，清理重复 {legacyBackups.RedundantDeletedCount} 个";
 			string orphanSummary = string.Empty;
 			bool orphanError = !string.IsNullOrWhiteSpace(orphanDetectionError);
-			if (orphanedThreads.Count > 0)
+			int staleSidebarCount = orphanedThreads.Count + deletedSidebarRemnants.Count;
+			if (staleSidebarCount > 0)
 			{
 				if (CodexDesktopProjectRegistry.IsDesktopRunning(codexHome))
 				{
-					orphanSummary = $" · 检测到侧边栏失效项 {orphanedThreads.Count} 个（完全退出 Codex 后点击刷新可处理）";
+					orphanSummary = $" · 检测到侧边栏失效项 {staleSidebarCount} 个（完全退出 Codex 后点击刷新可处理）";
 				}
 				else
 				{
-					string itemPreview = string.Join("\n", orphanedThreads.Take(8).Select((DbThread thread) => "• " + (string.IsNullOrWhiteSpace(thread.Title) ? thread.Id : thread.Title + " · " + thread.Id)));
-					if (orphanedThreads.Count > 8)
+					IEnumerable<string> currentPreview = orphanedThreads.Select((DbThread thread) => (UiLanguage.IsEnglish ? "• [Current index] " : "• [当前索引] ") + (string.IsNullOrWhiteSpace(thread.Title) ? thread.Id : thread.Title + " · " + thread.Id));
+					IEnumerable<string> legacyPreview = deletedSidebarRemnants.Select((DbThread thread) => (UiLanguage.IsEnglish ? "• [Legacy deletion] " : "• [旧版删除] ") + (string.IsNullOrWhiteSpace(thread.Title) ? thread.Id : thread.Title + " · " + thread.Id));
+					string itemPreview = string.Join("\n", currentPreview.Concat(legacyPreview).Take(8));
+					if (staleSidebarCount > 8)
 					{
-						itemPreview += $"\n…另有 {orphanedThreads.Count - 8} 个";
+						itemPreview += UiLanguage.IsEnglish ? $"\n…{staleSidebarCount - 8} more" : $"\n…另有 {staleSidebarCount - 8} 个";
 					}
-					MessageBoxResult repairAnswer = AppDialog.ShowCompat(window, $"检测到 {orphanedThreads.Count} 个侧边栏失效项：它们的索引仍存在，但对应会话文件已经不存在。\n\n{itemPreview}\n\n是否删除上面这些失效索引？操作前会自动备份索引；不会删除任何仍存在的会话文件。", "清理侧边栏失效项", MessageBoxButton.YesNo, MessageBoxImage.Question);
+					string categorySummary = UiLanguage.IsEnglish
+						? $"Current index remnants: {orphanedThreads.Count}; legacy partial-deletion remnants: {deletedSidebarRemnants.Count}."
+						: $"当前索引残留 {orphanedThreads.Count} 个；旧版半删除残留 {deletedSidebarRemnants.Count} 个。";
+					string repairPrompt = UiLanguage.IsEnglish
+						? $"Detected {staleSidebarCount} confirmed unreadable sidebar tasks.\n{categorySummary}\n\n{itemPreview}\n\nClean these task-directory records through Codex's official deletion interface? This does not delete project files or any conversation file that still exists."
+						: $"检测到 {staleSidebarCount} 个已确认打不开的侧边栏任务。\n{categorySummary}\n\n{itemPreview}\n\n是否通过 Codex 官方删除接口清理这些任务目录记录？本操作不会删除任何项目文件，也不会删除任何仍存在的会话文件。";
+					MessageBoxResult repairAnswer = AppDialog.ShowCompat(window, repairPrompt, "清理侧边栏失效项", MessageBoxButton.YesNo, MessageBoxImage.Question);
 					if (repairAnswer == MessageBoxResult.Yes)
 					{
 						try
 						{
-							OrphanIndexRepairResult repair = await Task.Run(() => ConversationIndexMaintenance.RepairSelectedOrphans(codexHome, orphanedThreads.Select((DbThread thread) => thread.Id)));
-							if (repair.DesktopRunning)
+							int repairedCount = 0;
+							bool desktopRestarted = false;
+							List<string> backupPaths = new List<string>();
+							if (orphanedThreads.Count > 0)
+							{
+								OrphanIndexRepairResult currentRepair = await Task.Run(() => ConversationIndexMaintenance.RepairSelectedOrphans(codexHome, orphanedThreads.Select((DbThread thread) => thread.Id)));
+								repairedCount += currentRepair.RepairedCount;
+								desktopRestarted |= currentRepair.DesktopRunning;
+								if (!string.IsNullOrWhiteSpace(currentRepair.IndexBackupPath))
+								{
+									backupPaths.Add(currentRepair.IndexBackupPath);
+								}
+							}
+							if (!desktopRestarted && deletedSidebarRemnants.Count > 0)
+							{
+								OrphanIndexRepairResult legacyRepair = await Task.Run(() => ConversationIndexMaintenance.RepairDeletedSidebarRemnants(codexHome, deletedSidebarRemnants.Select((DbThread thread) => thread.Id)));
+								repairedCount += legacyRepair.RepairedCount;
+								desktopRestarted |= legacyRepair.DesktopRunning;
+								if (!string.IsNullOrWhiteSpace(legacyRepair.IndexBackupPath))
+								{
+									backupPaths.Add(legacyRepair.IndexBackupPath);
+								}
+							}
+							if (desktopRestarted)
 							{
 								orphanSummary = " · Codex 已重新启动，未清理失效项";
 								orphanError = true;
 							}
 							else
 							{
-								orphanSummary = $" · 已清理侧边栏失效项 {repair.RepairedCount} 个";
-								AppendLog($"已清理侧边栏失效项 {repair.RepairedCount} 个。索引备份：{repair.IndexBackupPath}");
+								orphanSummary = UiLanguage.IsEnglish ? $" · Cleaned stale sidebar entries through the official Codex interface: {repairedCount}" : $" · 已通过 Codex 官方接口清理侧边栏失效项 {repairedCount} 个";
+								AppendLog(UiLanguage.IsEnglish
+									? $"Cleaned stale sidebar entries through the official Codex interface: {repairedCount}." + (backupPaths.Count == 0 ? string.Empty : " Index backup: " + string.Join("; ", backupPaths.Distinct(StringComparer.OrdinalIgnoreCase)))
+									: $"已通过 Codex 官方接口清理侧边栏失效项 {repairedCount} 个。" + (backupPaths.Count == 0 ? string.Empty : "索引备份：" + string.Join("；", backupPaths.Distinct(StringComparer.OrdinalIgnoreCase))));
 							}
 						}
 						catch (Exception repairError)
@@ -1340,7 +1383,7 @@ internal sealed class MainWindowController
 					}
 					else
 					{
-						orphanSummary = $" · 已保留侧边栏失效项 {orphanedThreads.Count} 个";
+						orphanSummary = UiLanguage.IsEnglish ? $" · Kept stale sidebar entries: {staleSidebarCount}" : $" · 已保留侧边栏失效项 {staleSidebarCount} 个";
 					}
 				}
 			}
@@ -1744,6 +1787,8 @@ internal sealed class MainWindowController
 			return;
 		}
 		bool deletingSubagent = session.IsSubagent;
+		List<SessionInfo> affectedSessions = BuildDeletionClosure(session);
+		int descendantCount = Math.Max(0, affectedSessions.Count - 1);
 		string projectPath = ConversationStorage.ResolveProjectPath(session, selectedProject);
 		int relatedConversationCount = CountRelatedConversations(projectPath);
 		DeleteOptions options = DeleteOptionsDialog.Show(window, session, projectPath, relatedConversationCount, allowProjectActions: !deletingSubagent);
@@ -1770,7 +1815,16 @@ internal sealed class MainWindowController
 			ProjectDeleteMode.Permanent => "\n项目：永久递归删除（不可恢复）",
 			_ => "\n项目：保留不动"
 		};
-		MessageBoxResult answer = AppDialog.ShowCompat(window, "请确认本次操作：\n\n" + session.DisplayTitle + "\n\n" + conversationSummary + projectSummary + "\n\n本次操作会同步更新会话文件与 Codex 侧边栏索引。", deletingSubagent ? "确认删除子代理对话" : "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Exclamation);
+		string cascadeSummary = descendantCount > 0
+			? (options.ConversationMode == ConversationDeleteMode.MoveToTrash
+				? "\n关联子代理：" + descendantCount + " 个；会分别移入软件回收站，可单独恢复"
+				: "\n关联子代理：" + descendantCount + " 个；会随主对话永久删除")
+			: string.Empty;
+		string confirmationText = UiLanguage.IsEnglish
+			? "Confirm this operation:\n\n" + session.DisplayTitle + "\n\nConversation: " + (options.ConversationMode == ConversationDeleteMode.MoveToTrash ? "move to the app trash (recoverable)" : "permanently delete") + (descendantCount > 0 ? "\nSpawned descendants: " + descendantCount + (options.ConversationMode == ConversationDeleteMode.MoveToTrash ? "; each will receive its own recoverable trash copy" : "; all will also be permanently deleted") : string.Empty) + (options.ProjectMode == ProjectDeleteMode.RecycleBin ? "\nProject: move to Windows Recycle Bin" : options.ProjectMode == ProjectDeleteMode.Permanent ? "\nProject: permanently delete" : "\nProject: keep unchanged") + "\n\nThe Codex thread/delete protocol is applied first, followed by local file and index cleanup."
+			: "请确认本次操作：\n\n" + session.DisplayTitle + "\n\n" + conversationSummary + cascadeSummary + projectSummary + "\n\n本次操作会先通过 Codex 官方删除接口更新任务目录，再处理本地会话文件与索引。";
+		string confirmationTitle = UiLanguage.IsEnglish ? (deletingSubagent ? "Confirm subagent deletion" : "Confirm deletion") : (deletingSubagent ? "确认删除子代理对话" : "确认删除");
+		MessageBoxResult answer = AppDialog.ShowCompat(window, confirmationText, confirmationTitle, MessageBoxButton.YesNo, MessageBoxImage.Exclamation);
 		if (answer != MessageBoxResult.Yes)
 		{
 			return;
@@ -1785,7 +1839,7 @@ internal sealed class MainWindowController
 				string selectedProjectPath = projectPath;
 				operation = await Task.Run(delegate
 				{
-					DeletedSessionResult conversation = options.ConversationMode == ConversationDeleteMode.MoveToTrash ? ConversationStorage.MoveToTrash(session, selectedProjectPath) : ConversationStorage.DeletePermanently(session);
+					DeletedSessionResult conversation = options.ConversationMode == ConversationDeleteMode.MoveToTrash ? ConversationStorage.MoveToTrash(session, selectedProjectPath, affectedSessions) : ConversationStorage.DeletePermanently(session, affectedSessions);
 					DeleteOperationResult result = new DeleteOperationResult
 					{
 						Conversation = conversation,
@@ -1801,7 +1855,10 @@ internal sealed class MainWindowController
 							{
 								try
 								{
-									ConversationStorage.MarkProjectHandled(conversation.BackupPath, selectedProjectPath, options.ProjectMode);
+									foreach (string backupPath in conversation.BackupPaths.Count > 0 ? conversation.BackupPaths : new List<string> { conversation.BackupPath })
+									{
+										ConversationStorage.MarkProjectHandled(backupPath, selectedProjectPath, options.ProjectMode);
+									}
 								}
 								catch
 								{
@@ -1834,12 +1891,33 @@ internal sealed class MainWindowController
 		{
 			projectList.SelectedItem = previousProject;
 		}
-		string completion = operation.Conversation.PermanentlyDeleted ? "会话已永久删除。" : "会话已移入软件回收站：\n" + operation.Conversation.BackupPath;
-		if (operation.ProjectMode != ProjectDeleteMode.None)
+		string completion;
+		if (UiLanguage.IsEnglish)
 		{
-			completion += operation.ProjectSucceeded ? (operation.ProjectMode == ProjectDeleteMode.RecycleBin ? "\n\n项目已移入 Windows 回收站。" : "\n\n项目已永久删除。") : "\n\n会话操作已完成，但项目处理失败：\n" + operation.ProjectError;
+			completion = operation.Conversation.PermanentlyDeleted ? "The conversation was permanently deleted." : "The conversation was moved to app trash:\n" + operation.Conversation.BackupPath;
+			if (operation.Conversation.AffectedConversationCount > 1)
+			{
+				completion += operation.Conversation.PermanentlyDeleted ? "\n\n" + (operation.Conversation.AffectedConversationCount - 1) + " spawned descendant conversations were also permanently deleted." : "\n\n" + (operation.Conversation.AffectedConversationCount - 1) + " spawned descendant conversations were separately moved to app trash.";
+			}
+			if (operation.ProjectMode != ProjectDeleteMode.None)
+			{
+				completion += operation.ProjectSucceeded ? (operation.ProjectMode == ProjectDeleteMode.RecycleBin ? "\n\nThe project was moved to the Windows Recycle Bin." : "\n\nThe project was permanently deleted.") : "\n\nThe conversation operation completed, but project processing failed:\n" + operation.ProjectError;
+			}
+			completion += "\n\nAfter reopening Codex, the deleted conversation will no longer appear in the sidebar.";
 		}
-		completion += "\n\n重新打开 Codex 后，该会话不会再出现在侧边栏。";
+		else
+		{
+			completion = operation.Conversation.PermanentlyDeleted ? "会话已永久删除。" : "会话已移入软件回收站：\n" + operation.Conversation.BackupPath;
+			if (operation.Conversation.AffectedConversationCount > 1)
+			{
+				completion += operation.Conversation.PermanentlyDeleted ? "\n\n同时永久删除 " + (operation.Conversation.AffectedConversationCount - 1) + " 个关联子代理对话。" : "\n\n另有 " + (operation.Conversation.AffectedConversationCount - 1) + " 个关联子代理对话已分别移入软件回收站。";
+			}
+			if (operation.ProjectMode != ProjectDeleteMode.None)
+			{
+				completion += operation.ProjectSucceeded ? (operation.ProjectMode == ProjectDeleteMode.RecycleBin ? "\n\n项目已移入 Windows 回收站。" : "\n\n项目已永久删除。") : "\n\n会话操作已完成，但项目处理失败：\n" + operation.ProjectError;
+			}
+			completion += "\n\n重新打开 Codex 后，该会话不会再出现在侧边栏。";
+		}
 		SetStatus(operation.ProjectSucceeded ? (operation.Conversation.PermanentlyDeleted ? "会话已永久删除。" : "会话已移入软件回收站。") : "会话已删除，但项目处理失败。", error: !operation.ProjectSucceeded);
 		AppDialog.ShowCompat(window, completion, operation.ProjectSucceeded ? "删除完成" : "部分完成", MessageBoxButton.OK, operation.ProjectSucceeded ? MessageBoxImage.Asterisk : MessageBoxImage.Warning);
 	}
@@ -1864,14 +1942,34 @@ internal sealed class MainWindowController
 			return;
 		}
 		ProjectGroup sourceProject = selectedProject;
+		List<SessionDeletionPlan> deletionPlans = BuildDeletionPlans(selectedSessions);
+		HashSet<string> selectedIds = new HashSet<string>(selectedSessions.Select((SessionInfo item) => item.ThreadId), StringComparer.OrdinalIgnoreCase);
+		List<SessionInfo> allAffectedSessions = deletionPlans.SelectMany((SessionDeletionPlan plan) => plan.AffectedSessions).GroupBy((SessionInfo item) => item.ThreadId, StringComparer.OrdinalIgnoreCase).Select((IGrouping<string, SessionInfo> group) => group.First()).ToList();
+		int additionalDescendantCount = allAffectedSessions.Count((SessionInfo item) => !selectedIds.Contains(item.ThreadId));
 		DeleteOptions options = SessionBatchDeleteDialog.Show(window, sourceProject, selectedSessions);
 		if (options == null)
 		{
 			return;
 		}
-		if (options.ConversationMode == ConversationDeleteMode.Permanent)
+		if (options.ConversationMode == ConversationDeleteMode.Permanent || additionalDescendantCount > 0)
 		{
-			MessageBoxResult permanentAnswer = AppDialog.ShowCompat(window, "将永久删除已选择的 " + selectedSessions.Count + " 个" + typeLabel + "（" + TextHelpers.FormatBytes(selectedSessions.Sum((SessionInfo session) => session.SizeBytes)) + "）。\n\n未选择的" + typeLabel + "、全部" + otherTypeLabel + "和项目目录都不会删除。", "确认永久删除所选" + typeLabel, MessageBoxButton.YesNo, MessageBoxImage.Exclamation);
+			string impactText;
+			string impactTitle;
+			if (UiLanguage.IsEnglish)
+			{
+				impactText = options.ConversationMode == ConversationDeleteMode.Permanent
+					? "Permanently delete " + allAffectedSessions.Count + " conversations (" + TextHelpers.FormatBytes(allAffectedSessions.Sum((SessionInfo item) => item.SizeBytes)) + "), including " + additionalDescendantCount + " spawned descendants that were not separately selected.\n\nConversations outside these descendant relationships and the project folder remain unchanged."
+					: "Move " + allAffectedSessions.Count + " conversations to the app trash, including " + additionalDescendantCount + " spawned descendants that were not separately selected. Each receives an independent recoverable copy.\n\nConversations outside these descendant relationships and the project folder remain unchanged.";
+				impactTitle = options.ConversationMode == ConversationDeleteMode.Permanent ? "Confirm permanent deletion" : "Confirm descendant handling";
+			}
+			else
+			{
+				impactText = options.ConversationMode == ConversationDeleteMode.Permanent
+					? "将永久删除共 " + allAffectedSessions.Count + " 个对话（" + TextHelpers.FormatBytes(allAffectedSessions.Sum((SessionInfo item) => item.SizeBytes)) + "），其中包含 " + additionalDescendantCount + " 个未单独勾选、但由所选对话生成的子代理。\n\n不属于这些父子关系的未选对话和项目目录都不会删除。"
+					: "将把共 " + allAffectedSessions.Count + " 个对话移入软件回收站，其中包含 " + additionalDescendantCount + " 个未单独勾选、但由所选对话生成的子代理；每个对话都会保留独立、可恢复的副本。\n\n不属于这些父子关系的未选对话和项目目录都不会删除。";
+				impactTitle = options.ConversationMode == ConversationDeleteMode.Permanent ? "确认永久删除" : "确认处理关联子代理";
+			}
+			MessageBoxResult permanentAnswer = AppDialog.ShowCompat(window, impactText, impactTitle, MessageBoxButton.YesNo, MessageBoxImage.Exclamation);
 			if (permanentAnswer != MessageBoxResult.Yes)
 			{
 				return;
@@ -1881,24 +1979,27 @@ internal sealed class MainWindowController
 		string projectId = sourceProject.ProjectId;
 		SetBusy(busy: true, options.ConversationMode == ConversationDeleteMode.MoveToTrash ? "正在把所选" + typeLabel + "移入软件回收站……" : "正在永久删除所选" + typeLabel + "……");
 		int completed = 0;
+		int affectedCompleted = 0;
 		List<string> errors = new List<string>();
 		try
 		{
 			await Task.Run(delegate
 			{
-				foreach (SessionInfo session in selectedSessions)
+				foreach (SessionDeletionPlan plan in deletionPlans)
 				{
+					SessionInfo session = plan.Root;
 					try
 					{
 						if (options.ConversationMode == ConversationDeleteMode.MoveToTrash)
 						{
-							ConversationStorage.MoveToTrash(session, ConversationStorage.ResolveProjectPath(session, sourceProject));
+							ConversationStorage.MoveToTrash(session, ConversationStorage.ResolveProjectPath(session, sourceProject), plan.AffectedSessions);
 						}
 						else
 						{
-							ConversationStorage.DeletePermanently(session);
+							ConversationStorage.DeletePermanently(session, plan.AffectedSessions);
 						}
-						completed++;
+						completed += plan.AffectedSessions.Count((SessionInfo item) => selectedIds.Contains(item.ThreadId));
+						affectedCompleted += plan.AffectedSessions.Count;
 					}
 					catch (Exception ex)
 					{
@@ -1929,12 +2030,14 @@ internal sealed class MainWindowController
 		}
 		UpdateSessionTypeView();
 		string action = options.ConversationMode == ConversationDeleteMode.MoveToTrash ? "移入软件回收站" : "永久删除";
-		string resultText = "已" + action + " " + completed + " 个所选" + typeLabel + "。\n\n未选择的" + typeLabel + "、全部" + otherTypeLabel + "和项目目录保持不变。";
+		string resultText = UiLanguage.IsEnglish
+			? (options.ConversationMode == ConversationDeleteMode.MoveToTrash ? "Moved " : "Permanently deleted ") + completed + " selected " + (deletingSubagents ? "subagent conversations" : "main conversations") + "; " + affectedCompleted + " conversations were processed in total.\n\nUnselected conversations outside the selected descendant relationships and the project folder remain unchanged."
+			: "已" + action + " " + completed + " 个所选" + typeLabel + "，实际处理 " + affectedCompleted + " 个对话。\n\n不属于所选对话后代关系的未选" + typeLabel + "、" + otherTypeLabel + "和项目目录保持不变。";
 		if (errors.Count > 0)
 		{
-			resultText += "\n\n有 " + errors.Count + " 个处理失败：\n" + string.Join("\n", errors.Take(8));
+			resultText += UiLanguage.IsEnglish ? "\n\n" + errors.Count + " operations failed:\n" + string.Join("\n", errors.Take(8)) : "\n\n有 " + errors.Count + " 个处理失败：\n" + string.Join("\n", errors.Take(8));
 		}
-		resultText += "\n\n重新打开 Codex 后，已删除的会话不会再出现在侧边栏。";
+		resultText += UiLanguage.IsEnglish ? "\n\nAfter reopening Codex, deleted conversations will no longer appear in the sidebar." : "\n\n重新打开 Codex 后，已删除的会话不会再出现在侧边栏。";
 		SetStatus(errors.Count == 0 ? "所选" + typeLabel + "已处理。" : "部分所选" + typeLabel + "处理失败。", error: errors.Count > 0);
 		AppDialog.ShowCompat(window, resultText, errors.Count == 0 ? "所选" + typeLabel + "处理完成" : typeLabel + "部分处理完成", MessageBoxButton.OK, errors.Count == 0 ? MessageBoxImage.Asterisk : MessageBoxImage.Warning);
 	}
@@ -1946,6 +2049,65 @@ internal sealed class MainWindowController
 			return 0;
 		}
 		return projects.SelectMany((ProjectGroup project) => project.Sessions).Where((SessionInfo item) => !item.IsSubagent && TextHelpers.IsWithin(item.Cwd, projectPath)).Select((SessionInfo item) => item.ThreadId).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+	}
+
+	private List<SessionInfo> BuildDeletionClosure(SessionInfo root)
+	{
+		List<SessionInfo> allSessions = projects.SelectMany((ProjectGroup project) => project.Sessions ?? new List<SessionInfo>()).Where((SessionInfo item) => item != null && !string.IsNullOrWhiteSpace(item.ThreadId)).GroupBy((SessionInfo item) => item.ThreadId, StringComparer.OrdinalIgnoreCase).Select((IGrouping<string, SessionInfo> group) => group.First()).ToList();
+		Dictionary<string, List<SessionInfo>> children = allSessions.Where((SessionInfo item) => !string.IsNullOrWhiteSpace(item.ParentThreadId)).GroupBy((SessionInfo item) => item.ParentThreadId, StringComparer.OrdinalIgnoreCase).ToDictionary((IGrouping<string, SessionInfo> group) => group.Key, (IGrouping<string, SessionInfo> group) => group.ToList(), StringComparer.OrdinalIgnoreCase);
+		List<SessionInfo> closure = new List<SessionInfo> { root };
+		HashSet<string> visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { root.ThreadId };
+		Queue<string> pending = new Queue<string>();
+		pending.Enqueue(root.ThreadId);
+		while (pending.Count > 0)
+		{
+			string parentId = pending.Dequeue();
+			if (!children.TryGetValue(parentId, out List<SessionInfo> directChildren))
+			{
+				continue;
+			}
+			foreach (SessionInfo child in directChildren)
+			{
+				if (visited.Add(child.ThreadId))
+				{
+					closure.Add(child);
+					pending.Enqueue(child.ThreadId);
+				}
+			}
+		}
+		return closure;
+	}
+
+	private List<SessionDeletionPlan> BuildDeletionPlans(IEnumerable<SessionInfo> selectedSessions)
+	{
+		List<SessionInfo> selected = (selectedSessions ?? Enumerable.Empty<SessionInfo>()).Where((SessionInfo item) => item != null && !string.IsNullOrWhiteSpace(item.ThreadId)).GroupBy((SessionInfo item) => item.ThreadId, StringComparer.OrdinalIgnoreCase).Select((IGrouping<string, SessionInfo> group) => group.First()).ToList();
+		HashSet<string> selectedIds = new HashSet<string>(selected.Select((SessionInfo item) => item.ThreadId), StringComparer.OrdinalIgnoreCase);
+		Dictionary<string, SessionInfo> allById = projects.SelectMany((ProjectGroup project) => project.Sessions ?? new List<SessionInfo>()).Where((SessionInfo item) => item != null && !string.IsNullOrWhiteSpace(item.ThreadId)).GroupBy((SessionInfo item) => item.ThreadId, StringComparer.OrdinalIgnoreCase).ToDictionary((IGrouping<string, SessionInfo> group) => group.Key, (IGrouping<string, SessionInfo> group) => group.First(), StringComparer.OrdinalIgnoreCase);
+		List<SessionDeletionPlan> plans = new List<SessionDeletionPlan>();
+		foreach (SessionInfo candidate in selected)
+		{
+			HashSet<string> visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			string parentId = candidate.ParentThreadId;
+			bool hasSelectedAncestor = false;
+			while (!string.IsNullOrWhiteSpace(parentId) && visited.Add(parentId))
+			{
+				if (selectedIds.Contains(parentId))
+				{
+					hasSelectedAncestor = true;
+					break;
+				}
+				if (!allById.TryGetValue(parentId, out SessionInfo parent))
+				{
+					break;
+				}
+				parentId = parent.ParentThreadId;
+			}
+			if (!hasSelectedAncestor)
+			{
+				plans.Add(new SessionDeletionPlan { Root = candidate, AffectedSessions = BuildDeletionClosure(candidate) });
+			}
+		}
+		return plans;
 	}
 
 	private async Task ShowTrashManagerAsync()
@@ -3729,5 +3891,12 @@ internal sealed class MainWindowController
 		catch
 		{
 		}
+	}
+
+	private sealed class SessionDeletionPlan
+	{
+		public SessionInfo Root { get; set; }
+
+		public List<SessionInfo> AffectedSessions { get; set; }
 	}
 }

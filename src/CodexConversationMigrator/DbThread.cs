@@ -18,6 +18,8 @@ internal sealed class DbThread
 
 	public string ThreadSource { get; set; }
 
+	public string ParentThreadId { get; set; }
+
 	public bool Archived { get; set; }
 
 	public long UpdatedAtMilliseconds { get; set; }

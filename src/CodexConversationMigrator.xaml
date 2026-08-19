@@ -866,7 +866,7 @@
                                                         </StackPanel>
                                                         <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                                                             <Button x:Name="ViewSessionButton" Style="{StaticResource SessionActionButton}" Content="查看" CommandParameter="{Binding}" ToolTip="查看对话内容" />
-                                                            <Button x:Name="DeleteSessionButton" Style="{StaticResource DangerActionButton}" Content="删除…" CommandParameter="{Binding}" IsEnabled="{Binding CanDelete}" Margin="3,0,0,0" ToolTip="主对话可同时处理项目；子代理对话只删除自身记录" />
+                                                            <Button x:Name="DeleteSessionButton" Style="{StaticResource DangerActionButton}" Content="删除…" CommandParameter="{Binding}" IsEnabled="{Binding CanDelete}" Margin="3,0,0,0" ToolTip="主对话可同时处理项目；删除存在后代的对话时会一并处理其子代理" />
                                                         </StackPanel>
                                                     </Grid>
                                                 </Border>

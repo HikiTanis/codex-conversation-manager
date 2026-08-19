@@ -45,6 +45,7 @@ internal static class CodexCatalog
 		string statePath = Path.Combine(text, ".codex-global-state.json");
 		string path = Path.Combine(text, "session_index.jsonl");
 		int num = ApplyRolloutMetadata(cctSessions, text);
+		ApplyIndexedParentRelationships(cctSessions, text);
 		Dictionary<string, SessionInfo> dictionary = cctSessions.Where((SessionInfo x) => !string.IsNullOrWhiteSpace(x.ThreadId)).GroupBy((SessionInfo x) => x.ThreadId, StringComparer.OrdinalIgnoreCase).ToDictionary((IGrouping<string, SessionInfo> group) => group.Key, (IGrouping<string, SessionInfo> group) => (from x in @group
 			orderby x.MetadataVerified descending, x.UpdatedDate descending
 			select x).First(), StringComparer.OrdinalIgnoreCase);
@@ -133,6 +134,37 @@ internal static class CodexCatalog
 			catalogResult2.Diagnostic = (catalogResult2.UsedCodexIndex ? "已按 Codex 标题与 session_meta 校准" : "部分旧记录缺少 session_meta，已使用兼容识别");
 		}
 		return catalogResult2;
+	}
+
+	private static void ApplyIndexedParentRelationships(IEnumerable<SessionInfo> sessions, string codexHome)
+	{
+		try
+		{
+			string databasePath = WinSqliteMaintenance.FindActiveDatabase(codexHome);
+			if (string.IsNullOrWhiteSpace(databasePath) || !File.Exists(databasePath))
+			{
+				return;
+			}
+			Dictionary<string, DbThread> indexed = WinSqliteReader.ReadThreads(databasePath).Where((DbThread item) => item != null && !string.IsNullOrWhiteSpace(item.Id)).GroupBy((DbThread item) => item.Id, StringComparer.OrdinalIgnoreCase).ToDictionary((IGrouping<string, DbThread> group) => group.Key, (IGrouping<string, DbThread> group) => group.First(), StringComparer.OrdinalIgnoreCase);
+			foreach (SessionInfo session in sessions ?? Enumerable.Empty<SessionInfo>())
+			{
+				if (session == null || string.IsNullOrWhiteSpace(session.ThreadId) || !indexed.TryGetValue(session.ThreadId, out DbThread thread))
+				{
+					continue;
+				}
+				if (thread.IsSubagent || !string.IsNullOrWhiteSpace(thread.ParentThreadId))
+				{
+					session.IsSubagent = true;
+				}
+				if (!string.IsNullOrWhiteSpace(thread.ParentThreadId))
+				{
+					session.ParentThreadId = thread.ParentThreadId;
+				}
+			}
+		}
+		catch
+		{
+		}
 	}
 
 	public static string ResolveCodexHome()
@@ -227,9 +259,14 @@ internal static class CodexCatalog
 					session.Source = text5;
 				}
 				session.IsSubagent = string.Equals(a, "subagent", StringComparison.OrdinalIgnoreCase) || flag || text5.IndexOf("\"subagent\"", StringComparison.OrdinalIgnoreCase) >= 0;
-				if (session.IsSubagent && !string.IsNullOrWhiteSpace(metadataSessionId) && !string.Equals(metadataSessionId, session.ThreadId, StringComparison.OrdinalIgnoreCase))
+				if (session.IsSubagent)
 				{
-					session.ParentThreadId = metadataSessionId;
+					string parentThreadId = GetString(dictionary2, "parent_thread_id");
+					if (string.IsNullOrWhiteSpace(parentThreadId) && !string.IsNullOrWhiteSpace(metadataSessionId) && !string.Equals(metadataSessionId, session.ThreadId, StringComparison.OrdinalIgnoreCase))
+					{
+						parentThreadId = metadataSessionId;
+					}
+					session.ParentThreadId = parentThreadId;
 				}
 				if (session.IsSubagent)
 				{

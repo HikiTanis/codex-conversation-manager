@@ -403,15 +403,81 @@ internal static class Program
 		}
 	}
 
+	private static void RunRealOfficialThreadDeleteIntegrationTest()
+	{
+		string root = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "official-thread-delete-integration-" + Guid.NewGuid().ToString("N"));
+		string threadId = "44444444-4444-4444-8444-444444444444";
+		string sessionDirectory = Path.Combine(root, "sessions", "2026", "01", "02");
+		string sessionPath = Path.Combine(sessionDirectory, "rollout-2026-01-02T03-04-05-" + threadId + ".jsonl");
+		try
+		{
+			Directory.CreateDirectory(sessionDirectory);
+			Dictionary<string, object> sessionMeta = new Dictionary<string, object>
+			{
+				{ "timestamp", "2026-01-02T03:04:05Z" },
+				{ "type", "session_meta" },
+				{ "payload", new Dictionary<string, object>
+					{
+						{ "id", threadId },
+						{ "timestamp", "2026-01-02T03:04:05Z" },
+						{ "cwd", Path.Combine(root, "project") },
+						{ "originator", "codex-desktop" },
+						{ "cli_version", "integration-test" },
+						{ "source", "vscode" },
+						{ "model_provider", "openai" }
+					}
+				}
+			};
+			File.WriteAllText(sessionPath, CctRunner.NewSerializer().Serialize(sessionMeta) + Environment.NewLine, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			CodexAppServerThreadDeletion.TestOverride = null;
+			OfficialThreadDeletionResult result = CodexAppServerThreadDeletion.DeleteThread(root, threadId);
+			if (!result.Succeeded || File.Exists(sessionPath))
+			{
+				throw new InvalidOperationException("real Codex thread/delete integration test did not remove the disposable rollout");
+			}
+		}
+		finally
+		{
+			CodexAppServerThreadDeletion.TestOverride = null;
+			try
+			{
+				if (Directory.Exists(root))
+				{
+					Directory.Delete(root, recursive: true);
+				}
+			}
+			catch
+			{
+			}
+		}
+	}
+
 	private static string RunFeatureSafetyTest(string cct)
 	{
 		string environmentVariable = Environment.GetEnvironmentVariable("CODEX_HOME");
+		bool runRealOfficialDelete = Environment.GetEnvironmentVariable("CODEX_MIGRATOR_REAL_OFFICIAL_DELETE_TEST") == "1";
+		List<string> officialDeletes = new List<string>();
 		string text = Path.Combine(Path.GetTempPath(), "codex-migrator-feature-test-" + Guid.NewGuid().ToString("N"));
 		string projectDeleteTest = Path.Combine(Path.GetTempPath(), "codex-migrator-project-delete-test-" + Guid.NewGuid().ToString("N"));
 		string projectPayloadTest = Path.Combine(Path.GetTempPath(), "codex-migrator-project-payload-test-" + Guid.NewGuid().ToString("N"));
 		try
 		{
 			Environment.SetEnvironmentVariable("CODEX_HOME", text);
+			ConversationIndexMaintenance.LogRootOverride = Path.Combine(text, "codex-desktop-logs");
+			if (runRealOfficialDelete)
+			{
+				RunRealOfficialThreadDeleteIntegrationTest();
+			}
+			CodexAppServerThreadDeletion.TestOverride = delegate(string _, string threadId)
+			{
+				officialDeletes.Add(threadId);
+				return new OfficialThreadDeletionResult
+				{
+					Succeeded = true,
+					CodexPath = "self-test-codex.exe",
+					Error = string.Empty
+				};
+			};
 			string text2 = Path.Combine(text, "sessions", "2026", "01", "02");
 			Directory.CreateDirectory(text2);
 			string testThreadId = "11111111-1111-4111-8111-111111111111";
@@ -907,6 +973,112 @@ internal static class Program
 				throw new InvalidOperationException("direct permanent delete test failed");
 			}
 			AssertDesktopThreadAbsentForTest(Path.Combine(text, ".codex-global-state.json"), testThreadId);
+			if (officialDeletes.Count((string id) => string.Equals(id, testThreadId, StringComparison.OrdinalIgnoreCase)) != 3)
+			{
+				throw new InvalidOperationException("conversation deletion did not call the official thread/delete protocol exactly once per deletion");
+			}
+
+			string cascadeParentId = "66666666-6666-4666-8666-666666666666";
+			string cascadeChildId = "77777777-7777-4777-8777-777777777777";
+			string cascadeParentPath = Path.Combine(text2, "rollout-2026-01-06T03-04-05-" + cascadeParentId + ".jsonl");
+			string cascadeChildPath = Path.Combine(text2, "rollout-2026-01-06T03-05-05-" + cascadeChildId + ".jsonl");
+			string cascadeParentContents = fixtureContents.Replace(testThreadId, cascadeParentId).Replace("真正的问题", "级联主对话测试");
+			Dictionary<string, object> cascadeChildMeta = javaScriptSerializer.DeserializeObject(javaScriptSerializer.Serialize(obj)) as Dictionary<string, object>;
+			Dictionary<string, object> cascadeChildPayload = cascadeChildMeta["payload"] as Dictionary<string, object>;
+			cascadeChildPayload["id"] = cascadeChildId;
+			cascadeChildPayload["session_id"] = cascadeParentId;
+			cascadeChildPayload["parent_thread_id"] = cascadeParentId;
+			cascadeChildPayload["thread_source"] = "subagent";
+			cascadeChildPayload["source"] = new Dictionary<string, object>
+			{
+				{
+					"subagent",
+					new Dictionary<string, object>
+					{
+						{
+							"thread_spawn",
+							new Dictionary<string, object> { { "parent_thread_id", cascadeParentId } }
+						}
+					}
+				}
+			};
+			string cascadeChildContents = javaScriptSerializer.Serialize(cascadeChildMeta) + Environment.NewLine + javaScriptSerializer.Serialize(obj2).Replace("真正的问题", "级联子代理测试") + Environment.NewLine + javaScriptSerializer.Serialize(obj3) + Environment.NewLine;
+			File.WriteAllText(cascadeParentPath, cascadeParentContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			File.WriteAllText(cascadeChildPath, cascadeChildContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			SessionInfo cascadeParent = new SessionInfo
+			{
+				ThreadId = cascadeParentId,
+				SessionPath = cascadeParentPath,
+				Title = "级联主对话测试",
+				Cwd = newProject,
+				Preview = "级联主对话测试",
+				Source = "cli",
+				CreatedAt = "2026-01-06T03:04:05Z",
+				UpdatedAt = "2026-01-06T03:05:06Z",
+				UpdatedDate = new DateTime(2026, 1, 6, 3, 5, 6, DateTimeKind.Utc)
+			};
+			SessionInfo cascadeChild = new SessionInfo
+			{
+				ThreadId = cascadeChildId,
+				SessionPath = cascadeChildPath,
+				Title = "级联子代理测试",
+				Cwd = newProject,
+				Preview = "级联子代理测试",
+				Source = "subagent",
+				CreatedAt = "2026-01-06T03:05:05Z",
+				UpdatedAt = "2026-01-06T03:05:06Z",
+				UpdatedDate = new DateTime(2026, 1, 6, 3, 5, 6, DateTimeKind.Utc),
+				IsSubagent = true,
+				ParentThreadId = cascadeParentId
+			};
+			TargetedThreadIndexer.IndexSessionFile(text, cascadeParentPath, cascadeParent.Title, cascadeParent.Preview);
+			TargetedThreadIndexer.IndexSessionFile(text, cascadeChildPath, cascadeChild.Title, cascadeChild.Preview);
+			if (!string.Equals(WinSqliteReader.ReadThreads(databasePath).Single((DbThread item) => string.Equals(item.Id, cascadeChildId, StringComparison.OrdinalIgnoreCase)).ParentThreadId, cascadeParentId, StringComparison.OrdinalIgnoreCase))
+			{
+				throw new InvalidOperationException("thread index parent-child relation was not readable for cascade protection");
+			}
+			DeletedSessionResult cascadeTrashResult = ConversationStorage.MoveToTrash(cascadeParent, newProject, new SessionInfo[2] { cascadeParent, cascadeChild });
+			List<TrashSessionInfo> cascadeTrashItems = ConversationStorage.ReadTrash().Where((TrashSessionInfo item) => string.Equals(item.ThreadId, cascadeParentId, StringComparison.OrdinalIgnoreCase) || string.Equals(item.ThreadId, cascadeChildId, StringComparison.OrdinalIgnoreCase)).ToList();
+			if (cascadeTrashResult.AffectedConversationCount != 2 || cascadeTrashResult.BackupPaths.Count != 2 || cascadeTrashItems.Count != 2 || File.Exists(cascadeParentPath) || File.Exists(cascadeChildPath) || officialDeletes.Count((string id) => string.Equals(id, cascadeParentId, StringComparison.OrdinalIgnoreCase)) != 1 || officialDeletes.Any((string id) => string.Equals(id, cascadeChildId, StringComparison.OrdinalIgnoreCase)))
+			{
+				throw new InvalidOperationException("cascade trash staging did not preserve every spawned descendant before official deletion");
+			}
+			ConversationStorage.Restore(cascadeTrashItems.Single((TrashSessionInfo item) => string.Equals(item.ThreadId, cascadeParentId, StringComparison.OrdinalIgnoreCase)));
+			ConversationStorage.Restore(cascadeTrashItems.Single((TrashSessionInfo item) => string.Equals(item.ThreadId, cascadeChildId, StringComparison.OrdinalIgnoreCase)));
+			if (!File.Exists(cascadeParentPath) || !File.Exists(cascadeChildPath) || !WinSqliteReader.ReadThreads(databasePath).Any((DbThread item) => string.Equals(item.Id, cascadeParentId, StringComparison.OrdinalIgnoreCase)) || !WinSqliteReader.ReadThreads(databasePath).Any((DbThread item) => string.Equals(item.Id, cascadeChildId, StringComparison.OrdinalIgnoreCase)))
+			{
+				throw new InvalidOperationException("cascade trash restore did not rebuild both conversations");
+			}
+			DeletedSessionResult cascadePermanentResult = ConversationStorage.DeletePermanently(cascadeParent, new SessionInfo[2] { cascadeParent, cascadeChild });
+			if (cascadePermanentResult.AffectedConversationCount != 2 || File.Exists(cascadeParentPath) || File.Exists(cascadeChildPath) || WinSqliteReader.ReadThreads(databasePath).Any((DbThread item) => string.Equals(item.Id, cascadeParentId, StringComparison.OrdinalIgnoreCase) || string.Equals(item.Id, cascadeChildId, StringComparison.OrdinalIgnoreCase)) || officialDeletes.Count((string id) => string.Equals(id, cascadeParentId, StringComparison.OrdinalIgnoreCase)) != 2 || officialDeletes.Any((string id) => string.Equals(id, cascadeChildId, StringComparison.OrdinalIgnoreCase)))
+			{
+				throw new InvalidOperationException("cascade permanent deletion was not handled by one root thread/delete call");
+			}
+
+			File.WriteAllText(text3, originalSessionContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			TargetedThreadIndexer.IndexSessionFile(text, text3, "官方删除失败保护测试", "官方删除失败保护测试");
+			CodexAppServerThreadDeletion.TestOverride = delegate
+			{
+				return new OfficialThreadDeletionResult { Succeeded = false, Error = "simulated refusal" };
+			};
+			bool officialRefusalBlockedLocalDelete = false;
+			try
+			{
+				ConversationStorage.DeletePermanently(session);
+			}
+			catch (InvalidOperationException)
+			{
+				officialRefusalBlockedLocalDelete = true;
+			}
+			if (!officialRefusalBlockedLocalDelete || !File.Exists(text3) || !WinSqliteReader.ReadThreads(databasePath).Any((DbThread item) => string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)))
+			{
+				throw new InvalidOperationException("official deletion refusal did not preserve the original conversation and index");
+			}
+			CodexAppServerThreadDeletion.TestOverride = delegate(string _, string threadId)
+			{
+				officialDeletes.Add(threadId);
+				return new OfficialThreadDeletionResult { Succeeded = true, CodexPath = "self-test-codex.exe", Error = string.Empty };
+			};
 
 			File.WriteAllText(text3, originalSessionContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 			TargetedThreadIndexer.IndexSessionFile(text, text3, "旧失效项测试", "旧失效项测试");
@@ -922,6 +1094,75 @@ internal static class Program
 				throw new InvalidOperationException("confirmed stale sidebar item repair test failed");
 			}
 			AssertDesktopThreadAbsentForTest(Path.Combine(text, ".codex-global-state.json"), testThreadId);
+
+			string guardedParentId = "88888888-8888-4888-8888-888888888888";
+			string guardedChildId = "99999999-9999-4999-8999-999999999999";
+			string guardedParentPath = Path.Combine(text2, "rollout-2026-01-07T03-04-05-" + guardedParentId + ".jsonl");
+			string guardedChildPath = Path.Combine(text2, "rollout-2026-01-07T03-05-05-" + guardedChildId + ".jsonl");
+			Dictionary<string, object> guardedChildMeta = javaScriptSerializer.DeserializeObject(javaScriptSerializer.Serialize(obj)) as Dictionary<string, object>;
+			Dictionary<string, object> guardedChildPayload = guardedChildMeta["payload"] as Dictionary<string, object>;
+			guardedChildPayload["id"] = guardedChildId;
+			guardedChildPayload["session_id"] = guardedParentId;
+			guardedChildPayload["parent_thread_id"] = guardedParentId;
+			guardedChildPayload["thread_source"] = "subagent";
+			guardedChildPayload["source"] = new Dictionary<string, object>
+			{
+				{
+					"subagent",
+					new Dictionary<string, object>
+					{
+						{
+							"thread_spawn",
+							new Dictionary<string, object> { { "parent_thread_id", guardedParentId } }
+						}
+					}
+				}
+			};
+			File.WriteAllText(guardedParentPath, fixtureContents.Replace(testThreadId, guardedParentId).Replace("真正的问题", "失效主对话子代理保护测试"), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			File.WriteAllText(guardedChildPath, javaScriptSerializer.Serialize(guardedChildMeta) + Environment.NewLine + javaScriptSerializer.Serialize(obj2).Replace("真正的问题", "仍存子代理") + Environment.NewLine + javaScriptSerializer.Serialize(obj3) + Environment.NewLine, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			TargetedThreadIndexer.IndexSessionFile(text, guardedParentPath, "失效主对话子代理保护测试", "失效主对话子代理保护测试");
+			TargetedThreadIndexer.IndexSessionFile(text, guardedChildPath, "仍存子代理", "仍存子代理");
+			File.Delete(guardedParentPath);
+			bool liveDescendantGuarded = false;
+			try
+			{
+				ConversationIndexMaintenance.RepairSelectedOrphans(text, new string[1] { guardedParentId });
+			}
+			catch (InvalidOperationException ex)
+			{
+				liveDescendantGuarded = ex.Message.IndexOf("仍关联", StringComparison.Ordinal) >= 0;
+			}
+			if (!liveDescendantGuarded || !File.Exists(guardedChildPath) || !WinSqliteReader.ReadThreads(databasePath).Any((DbThread item) => string.Equals(item.Id, guardedParentId, StringComparison.OrdinalIgnoreCase) || string.Equals(item.Id, guardedChildId, StringComparison.OrdinalIgnoreCase)) || officialDeletes.Any((string id) => string.Equals(id, guardedParentId, StringComparison.OrdinalIgnoreCase)))
+			{
+				throw new InvalidOperationException("stale-sidebar repair did not stop before cascading into a live descendant");
+			}
+			File.Delete(guardedChildPath);
+			WinSqliteMaintenance.RemoveThreads(text, new string[2] { guardedParentId, guardedChildId });
+			CodexDesktopProjectRegistry.RemoveThreads(text, new string[2] { guardedParentId, guardedChildId });
+
+			string legacySidebarThreadId = "55555555-5555-4555-8555-555555555555";
+			string legacySidebarPath = Path.Combine(text2, "rollout-2026-01-05T03-04-05-" + legacySidebarThreadId + ".jsonl");
+			string legacySidebarContents = fixtureContents.Replace(testThreadId, legacySidebarThreadId).Replace("真正的问题", "旧版半删除侧边栏测试");
+			File.WriteAllText(legacySidebarPath, legacySidebarContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			TargetedThreadIndexer.IndexSessionFile(text, legacySidebarPath, "旧版半删除侧边栏测试", "旧版半删除侧边栏测试");
+			ThreadIndexRemovalResult legacyPreDelete = WinSqliteMaintenance.RemoveThreads(text, new string[1] { legacySidebarThreadId });
+			if (string.IsNullOrWhiteSpace(legacyPreDelete.BackupPath) || !File.Exists(legacyPreDelete.BackupPath))
+			{
+				throw new InvalidOperationException("legacy stale sidebar setup did not create a pre-delete index backup");
+			}
+			File.Delete(legacySidebarPath);
+			Directory.CreateDirectory(ConversationIndexMaintenance.LogRootOverride);
+			File.WriteAllText(Path.Combine(ConversationIndexMaintenance.LogRootOverride, "codex-desktop-test.log"), "error [electron-message-handler] Request failed conversationId=" + legacySidebarThreadId + " error={\"message\":\"no rollout found for thread id " + legacySidebarThreadId + "\"} failureReason=rollout_not_found" + Environment.NewLine, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			List<DbThread> deletedSidebarRemnants = ConversationIndexMaintenance.FindDeletedSidebarRemnants(text);
+			if (deletedSidebarRemnants.Count != 1 || !string.Equals(deletedSidebarRemnants[0].Id, legacySidebarThreadId, StringComparison.OrdinalIgnoreCase))
+			{
+				throw new InvalidOperationException("log-confirmed legacy stale sidebar item was not detected precisely");
+			}
+			OrphanIndexRepairResult legacySidebarRepair = ConversationIndexMaintenance.RepairDeletedSidebarRemnants(text, new string[1] { legacySidebarThreadId });
+			if (legacySidebarRepair.RepairedCount != 1 || legacySidebarRepair.DesktopRunning || File.Exists(legacySidebarPath) || ConversationIndexMaintenance.FindDeletedSidebarRemnants(text).Count != 0 || officialDeletes.Count((string id) => string.Equals(id, legacySidebarThreadId, StringComparison.OrdinalIgnoreCase)) != 1)
+			{
+				throw new InvalidOperationException("log-confirmed legacy stale sidebar repair test failed");
+			}
 			string legacyThreadId = "33333333-3333-4333-8333-333333333333";
 			string legacyActive = Path.Combine(text2, "rollout-2026-01-04T03-04-05-" + legacyThreadId + ".jsonl");
 			string legacyContents = fixtureContents.Replace(testThreadId, legacyThreadId).Replace("真正的问题", "旧版安全快照测试");
@@ -1152,10 +1393,12 @@ internal static class Program
 			{
 				throw new InvalidOperationException("project payload traversal guard test failed");
 			}
-			return "ImportModes=origin-merge+independent-copy · SamePathMap=skipped · FormalBackup=.codexchat+.codexproject+legacy · CctBak=rollback+commit+delete+legacy-trash · Lineage=origin-persist+project-scope+parent-child+fresh-every-time+ambiguity-guard · IndependentCopy=retained+delete-isolated · TargetedIndex=insert+update+two-project-cwd+native-path+visibility · DesktopProjectState=existing-remap+create+multi-project+backup+verify · BackupPrewrite=OK · BackfillUnchanged=complete · PendingRunningGuard=OK · ZstdPreflight=OK · Preview=2 messages · Trash=move+index-remove+list+index-restore+purge · PermanentDelete=index-remove · StaleSidebar=detect+confirmed-repair · ProjectGuard+Permanent=OK · ProjectPayload=schema5+two-targets+target-guard+combined-pack+create+inspect+restore+skip+backup+traversal-guard · ResizeGrips=8";
+			return "ImportModes=origin-merge+independent-copy · SamePathMap=skipped · FormalBackup=.codexchat+.codexproject+legacy · CctBak=rollback+commit+delete+legacy-trash · Lineage=origin-persist+project-scope+parent-child+fresh-every-time+ambiguity-guard · IndependentCopy=retained+delete-isolated · TargetedIndex=insert+update+two-project-cwd+native-path+visibility · DesktopProjectState=existing-remap+create+multi-project+backup+verify · BackupPrewrite=OK · BackfillUnchanged=complete · PendingRunningGuard=OK · ZstdPreflight=OK · Preview=2 messages · Trash=copy+official-delete+index-remove+list+index-restore+purge+descendant-staging · PermanentDelete=official-delete+index-remove+descendant-cascade · OfficialDeleteRefusal=preserves-local-data · StaleSidebar=current+log-confirmed-legacy+official-repair+ledger+live-descendant-guard · ProjectGuard+Permanent=OK · ProjectPayload=schema5+two-targets+target-guard+combined-pack+create+inspect+restore+skip+backup+traversal-guard · ResizeGrips=8";
 		}
 		finally
 		{
+			CodexAppServerThreadDeletion.TestOverride = null;
+			ConversationIndexMaintenance.LogRootOverride = null;
 			Environment.SetEnvironmentVariable("CODEX_HOME", environmentVariable);
 			try
 			{

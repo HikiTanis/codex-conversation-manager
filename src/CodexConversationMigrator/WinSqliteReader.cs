@@ -53,7 +53,8 @@ internal static class WinSqliteReader
 			{
 				throw new InvalidDataException("无法只读打开 Codex 索引：" + Error(db));
 			}
-			string value = "select id,cwd,rollout_path,title,source,coalesce(thread_source,''),archived,coalesce(updated_at_ms,updated_at*1000) from threads";
+			bool hasSpawnEdges = TableExists(db, "thread_spawn_edges");
+			string value = "select id,cwd,rollout_path,title,source,coalesce(thread_source,''),archived,coalesce(updated_at_ms,updated_at*1000)," + (hasSpawnEdges ? "coalesce((select parent_thread_id from thread_spawn_edges where child_thread_id=threads.id limit 1),'')" : "''") + " from threads";
 			if (sqlite3_prepare_v2(db, Utf8(value), -1, out statement, IntPtr.Zero) != 0)
 			{
 				throw new InvalidDataException("无法读取 Codex threads：" + Error(db));
@@ -80,7 +81,8 @@ internal static class WinSqliteReader
 					Source = ColumnText(statement, 4),
 					ThreadSource = ColumnText(statement, 5),
 					Archived = (sqlite3_column_int64(statement, 6) != 0),
-					UpdatedAtMilliseconds = sqlite3_column_int64(statement, 7)
+					UpdatedAtMilliseconds = sqlite3_column_int64(statement, 7),
+					ParentThreadId = ColumnText(statement, 8)
 				});
 			}
 		}
@@ -93,6 +95,27 @@ internal static class WinSqliteReader
 			if (db != IntPtr.Zero)
 			{
 				sqlite3_close_v2(db);
+			}
+		}
+	}
+
+	private static bool TableExists(IntPtr db, string tableName)
+	{
+		IntPtr statement = IntPtr.Zero;
+		try
+		{
+			string sql = "select count(*) from sqlite_master where type='table' and name='" + (tableName ?? string.Empty).Replace("'", "''") + "'";
+			if (sqlite3_prepare_v2(db, Utf8(sql), -1, out statement, IntPtr.Zero) != 0)
+			{
+				return false;
+			}
+			return sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int64(statement, 0) > 0L;
+		}
+		finally
+		{
+			if (statement != IntPtr.Zero)
+			{
+				sqlite3_finalize(statement);
 			}
 		}
 	}

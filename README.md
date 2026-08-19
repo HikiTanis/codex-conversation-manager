@@ -44,12 +44,13 @@ After a project is renamed or moved on the same computer, its conversations can 
 ### Inspection, trash, and deletion
 
 - Moves selected conversations to the app trash for later restoration or permanent deletion.
-- Synchronizes conversation-file deletion with the local SQLite thread index and Codex desktop state so deleted items do not remain as broken sidebar entries.
+- Calls Codex's official `thread/delete` interface before touching local conversation data, then updates the session file, SQLite thread index, and desktop state only after official deletion succeeds. If the official interface is unavailable, the original conversation is preserved.
+- Codex deletes spawned descendant threads together with their parent. The application resolves the full parent-child graph first: app-trash deletion stages a separate recoverable copy for every affected descendant, while permanent deletion shows the complete impact count before confirmation.
 - Re-registers the thread index and desktop project association when a conversation is restored from the app trash.
 - Permanently deletes unneeded main or subagent conversations.
 - Optionally processes the related project folder when deleting a main conversation.
 - Moves a project folder to the Windows Recycle Bin or permanently deletes it after explicit confirmation.
-- Detects legacy sidebar entries whose rollout files are already missing and offers to remove only the entries the user confirms, after creating an index backup.
+- Repairs both index orphans and older partial deletions where the file and current index row are already gone but Codex still shows the task. Legacy candidates must be confirmed by both a recent Codex `rollout_not_found` log and the latest pre-deletion index backup before they are offered for review.
 
 > **Freeing space on drive C:** the app trash is stored inside the Codex data directory. Moving records there protects against accidental deletion but does not materially reclaim space on that drive. Permanently purge confirmed-unneeded records from the app trash to release their storage.
 
@@ -58,6 +59,15 @@ After a project is renamed or moved on the same computer, its conversations can 
 ## Download and run (end users)
 
 The release ZIP is portable: there is no installer, and end users do not need the .NET SDK, targeting pack, or any repository PowerShell script. A 64-bit Windows 10/11 system with the .NET Framework 4.8 runtime is required.
+
+Inspection, backup, and import work directly from the release package. **Conversation deletion and legacy-sidebar repair additionally require an independently callable Codex CLI (`codex.exe`)**. The application checks common npm installation paths, `PATH`, and its own directory. Run `codex --version` in PowerShell first. If the command is unavailable, follow the [official Codex CLI documentation](https://developers.openai.com/codex/cli), or install the npm package:
+
+```powershell
+npm install -g @openai/codex
+codex --version
+```
+
+If the CLI cannot be found or official deletion is rejected, the application stops and preserves the original conversation.
 
 1. Download `CodexConversationMigrator-Windows-v3.0.0.zip` and `SHA256SUMS.txt` from Releases.
 2. Extract the entire ZIP into a new folder. Do not run the application from inside the ZIP, and keep the EXE, XAML, and `cct.exe` together.
@@ -84,8 +94,8 @@ The release ZIP is portable: there is no installer, and end users do not need th
 
 1. Select a project, then switch between **Main conversations** and **Subagent conversations**.
 2. Review the latest update time, size, Thread ID, path, or read-only conversation content.
-3. Select individual records or use Select all, then choose **Delete selected**.
-4. Exit Codex before confirming deletion or restoration. If an older version already left a broken sidebar item, exit Codex and click **Refresh**, then review and confirm the stale-index cleanup prompt.
+3. Select individual records or use Select all, then choose **Delete selected**. If a main conversation has spawned descendants, the confirmation shows the additional impact count.
+4. Exit Codex before confirming deletion or restoration. If an older version left a broken sidebar item, open it once in Codex so the failure is recorded, exit Codex completely, then open this application and click **Refresh**. Review the title and Thread ID before confirming repair.
 5. Use the app trash when recovery may be needed; permanently purge confirmed-unneeded records when storage must be reclaimed.
 
 ## Typical workflows

@@ -70,7 +70,7 @@ internal static class UiLanguage
 		{ "查看", "View" },
 		{ "查看对话内容", "View conversation" },
 		{ "删除…", "Delete…" },
-		{ "主对话可同时处理项目；子代理对话只删除自身记录", "A main conversation can process its project too; a subagent deletion affects only its own record" },
+		{ "主对话可同时处理项目；删除存在后代的对话时会一并处理其子代理", "A main conversation can also process its project; deleting a conversation also handles its spawned descendants" },
 		{ "没有符合条件的对话", "No matching conversations" },
 		{ "已选 0 个项目＋对话", "0 projects + conversations selected" },
 		{ "生成 .codexproject：项目目录与全部关联对话一起备份", "Create a .codexproject containing project folders and all linked conversations" },
