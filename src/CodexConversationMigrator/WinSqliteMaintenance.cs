@@ -218,6 +218,139 @@ internal static class WinSqliteMaintenance
 		}
 	}
 
+	public static ThreadIndexRemovalResult RemoveThreads(string codexHome, IEnumerable<string> threadIds)
+	{
+		List<string> ids = (threadIds ?? Enumerable.Empty<string>())
+			.Where((string id) => !string.IsNullOrWhiteSpace(id))
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.ToList();
+		ThreadIndexRemovalResult result = new ThreadIndexRemovalResult
+		{
+			RequestedCount = ids.Count
+		};
+		if (ids.Count == 0)
+		{
+			return result;
+		}
+		string databasePath = FindActiveDatabase(codexHome);
+		result.DatabasePath = databasePath;
+		if (string.IsNullOrWhiteSpace(databasePath))
+		{
+			return result;
+		}
+		IntPtr db = IntPtr.Zero;
+		try
+		{
+			if (sqlite3_open_v2(Utf8(databasePath), out db, SQLITE_OPEN_READWRITE, IntPtr.Zero) != SQLITE_OK)
+			{
+				throw new InvalidDataException("无法打开 Codex 索引：" + Error(db));
+			}
+			sqlite3_busy_timeout(db, 8000);
+			if (!TableExists(db, "threads"))
+			{
+				throw new InvalidDataException("当前 Codex 索引没有 threads 表，未进行任何修改。");
+			}
+			string idList = string.Join(",", ids.Select(SqlText).ToArray());
+			string threadPredicate = "id in (" + idList + ")";
+			string edgePredicate = "parent_thread_id in (" + idList + ") or child_thread_id in (" + idList + ")";
+			int existingThreads = ScalarInt(db, "select count(*) from threads where " + threadPredicate);
+			int existingEdges = TableExists(db, "thread_spawn_edges") ? ScalarInt(db, "select count(*) from thread_spawn_edges where " + edgePredicate) : 0;
+			int existingTools = TableExists(db, "thread_dynamic_tools") ? ScalarInt(db, "select count(*) from thread_dynamic_tools where thread_id in (" + idList + ")") : 0;
+			if (existingThreads == 0 && existingEdges == 0 && existingTools == 0)
+			{
+				return result;
+			}
+			string backfillBefore = ReadBackfillSnapshot(db);
+			string backfillStatus = backfillBefore.Split(new char[1] { '\u001f' }, 2)[0];
+			if (!string.Equals(backfillStatus, "complete", StringComparison.OrdinalIgnoreCase))
+			{
+				throw new InvalidOperationException("Codex 的全局会话回填状态不是 complete（当前为 " + backfillStatus + "），本工具已拒绝清理侧边栏索引。请等待回填完成后重试。");
+			}
+			string dataVersion = Scalar(db, "pragma data_version");
+			string backupPath = CreateConsistentBackup(db, databasePath, codexHome);
+			if (!string.Equals(IntegrityCheck(backupPath), "ok", StringComparison.OrdinalIgnoreCase))
+			{
+				throw new InvalidDataException("写入前的 Codex 索引备份未通过完整性检查，未进行任何修改。");
+			}
+			bool transactionOpen = false;
+			try
+			{
+				Execute(db, "begin immediate;");
+				transactionOpen = true;
+				if (!string.Equals(dataVersion, Scalar(db, "pragma data_version"), StringComparison.Ordinal))
+				{
+					throw new InvalidOperationException("Codex 索引在备份期间仍被其他进程更新，已取消删除。请完全退出 Codex 后重试。");
+				}
+				string backfillLocked = ReadBackfillSnapshot(db);
+				if (!string.Equals(backfillBefore, backfillLocked, StringComparison.Ordinal))
+				{
+					throw new InvalidOperationException("备份后检测到 Codex 的全局回填状态发生变化，已取消删除；请稍后重试。");
+				}
+				if (TableExists(db, "thread_spawn_edges"))
+				{
+					Execute(db, "delete from thread_spawn_edges where " + edgePredicate + ";");
+				}
+				if (TableExists(db, "thread_dynamic_tools"))
+				{
+					Execute(db, "delete from thread_dynamic_tools where thread_id in (" + idList + ");");
+				}
+				Execute(db, "delete from threads where " + threadPredicate + ";");
+				if (ScalarInt(db, "select count(*) from threads where " + threadPredicate) != 0)
+				{
+					throw new InvalidDataException("Codex 侧边栏索引删除校验失败，事务已回滚。");
+				}
+				if (TableExists(db, "thread_spawn_edges") && ScalarInt(db, "select count(*) from thread_spawn_edges where " + edgePredicate) != 0)
+				{
+					throw new InvalidDataException("Codex 子代理关系索引删除校验失败，事务已回滚。");
+				}
+				if (!string.Equals(backfillLocked, ReadBackfillSnapshot(db), StringComparison.Ordinal))
+				{
+					throw new InvalidDataException("定点删除意外改变了全局回填状态，事务已回滚。");
+				}
+				if (!string.Equals(Scalar(db, "pragma integrity_check"), "ok", StringComparison.OrdinalIgnoreCase))
+				{
+					throw new InvalidDataException("Codex 索引完整性检查未通过，事务已回滚。");
+				}
+				Execute(db, "commit;");
+				transactionOpen = false;
+			}
+			catch
+			{
+				if (transactionOpen)
+				{
+					try
+					{
+						Execute(db, "rollback;");
+					}
+					catch
+					{
+					}
+				}
+				throw;
+			}
+			result.BackupPath = backupPath;
+			result.RemovedThreadCount = existingThreads;
+			result.RemovedEdgeCount = existingEdges;
+			return result;
+		}
+		finally
+		{
+			if (db != IntPtr.Zero)
+			{
+				sqlite3_close_v2(db);
+			}
+		}
+	}
+
+	private static int ScalarInt(IntPtr database, string sql)
+	{
+		if (!int.TryParse(Scalar(database, sql), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
+		{
+			throw new InvalidDataException("Codex 索引返回了无效计数。");
+		}
+		return value;
+	}
+
 	public static string ReadBackfillState(string databasePath)
 	{
 		IntPtr db = IntPtr.Zero;

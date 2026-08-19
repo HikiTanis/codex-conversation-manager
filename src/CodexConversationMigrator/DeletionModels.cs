@@ -57,6 +57,26 @@ internal sealed class TrashSessionInfo
 
 	public long SizeBytes { get; set; }
 
+	public string Preview { get; set; }
+
+	public string Source { get; set; }
+
+	public string ModelProvider { get; set; }
+
+	public string CliVersion { get; set; }
+
+	public string CreatedAt { get; set; }
+
+	public string UpdatedAt { get; set; }
+
+	public bool Archived { get; set; }
+
+	public bool Compressed { get; set; }
+
+	public bool IsSubagent { get; set; }
+
+	public string ParentThreadId { get; set; }
+
 	public string DisplayTitle => string.IsNullOrWhiteSpace(Title) ? UiLanguage.T("未命名会话") : Title;
 
 	public string DisplayDeletedAt => DeletedAt == default(DateTimeOffset) ? UiLanguage.T("时间未知") : DeletedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss");

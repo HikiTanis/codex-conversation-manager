@@ -1242,6 +1242,17 @@ internal sealed class MainWindowController
 		try
 		{
 			string codexHome = CodexCatalog.ResolveCodexHome();
+			List<DbThread> orphanedThreads = new List<DbThread>();
+			string orphanDetectionError = string.Empty;
+			try
+			{
+				orphanedThreads = await Task.Run(() => ConversationIndexMaintenance.FindOrphanedThreads(codexHome));
+			}
+			catch (Exception detectionError)
+			{
+				orphanDetectionError = detectionError.Message;
+				AppendLog("检测侧边栏失效项失败：" + detectionError.Message);
+			}
 			LegacyCctBackupMigrationResult legacyBackups = new LegacyCctBackupMigrationResult();
 			if (Environment.GetEnvironmentVariable("CODEX_MIGRATOR_SKIP_LEGACY_CCT_MAINTENANCE") != "1")
 			{
@@ -1287,7 +1298,57 @@ internal sealed class MainWindowController
 			string version = (versionTask.Result.StdOut ?? string.Empty).Trim();
 			cctStatusText.Text = (string.IsNullOrWhiteSpace(version) ? UiLanguage.T("cct 已连接") : version);
 			string cleanupSummary = legacyBackups.MovedToTrashCount == 0 ? string.Empty : $" · 旧版快照已转入回收站 {legacyBackups.MovedToTrashCount} 个，清理重复 {legacyBackups.RedundantDeletedCount} 个";
-			SetStatus($"已载入 {projects.Count} 个项目 · {catalog.MainCount} 个主对话 · {catalog.InternalCount} 个子代理对话 · {catalog.Diagnostic}{cleanupSummary}", error: false);
+			string orphanSummary = string.Empty;
+			bool orphanError = !string.IsNullOrWhiteSpace(orphanDetectionError);
+			if (orphanedThreads.Count > 0)
+			{
+				if (CodexDesktopProjectRegistry.IsDesktopRunning(codexHome))
+				{
+					orphanSummary = $" · 检测到侧边栏失效项 {orphanedThreads.Count} 个（完全退出 Codex 后点击刷新可处理）";
+				}
+				else
+				{
+					string itemPreview = string.Join("\n", orphanedThreads.Take(8).Select((DbThread thread) => "• " + (string.IsNullOrWhiteSpace(thread.Title) ? thread.Id : thread.Title + " · " + thread.Id)));
+					if (orphanedThreads.Count > 8)
+					{
+						itemPreview += $"\n…另有 {orphanedThreads.Count - 8} 个";
+					}
+					MessageBoxResult repairAnswer = AppDialog.ShowCompat(window, $"检测到 {orphanedThreads.Count} 个侧边栏失效项：它们的索引仍存在，但对应会话文件已经不存在。\n\n{itemPreview}\n\n是否删除上面这些失效索引？操作前会自动备份索引；不会删除任何仍存在的会话文件。", "清理侧边栏失效项", MessageBoxButton.YesNo, MessageBoxImage.Question);
+					if (repairAnswer == MessageBoxResult.Yes)
+					{
+						try
+						{
+							OrphanIndexRepairResult repair = await Task.Run(() => ConversationIndexMaintenance.RepairSelectedOrphans(codexHome, orphanedThreads.Select((DbThread thread) => thread.Id)));
+							if (repair.DesktopRunning)
+							{
+								orphanSummary = " · Codex 已重新启动，未清理失效项";
+								orphanError = true;
+							}
+							else
+							{
+								orphanSummary = $" · 已清理侧边栏失效项 {repair.RepairedCount} 个";
+								AppendLog($"已清理侧边栏失效项 {repair.RepairedCount} 个。索引备份：{repair.IndexBackupPath}");
+							}
+						}
+						catch (Exception repairError)
+						{
+							orphanSummary = " · 侧边栏失效项清理失败，详见操作记录";
+							orphanError = true;
+							AppendLog("清理侧边栏失效项失败：" + repairError.Message);
+							AppDialog.ShowCompat(window, repairError.Message, "清理失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+						}
+					}
+					else
+					{
+						orphanSummary = $" · 已保留侧边栏失效项 {orphanedThreads.Count} 个";
+					}
+				}
+			}
+			else if (orphanError)
+			{
+				orphanSummary = " · 侧边栏失效项检测失败，详见操作记录";
+			}
+			SetStatus($"已载入 {projects.Count} 个项目 · {catalog.MainCount} 个主对话 · {catalog.InternalCount} 个子代理对话 · {catalog.Diagnostic}{cleanupSummary}{orphanSummary}", error: orphanError);
 		}
 		catch (Exception ex)
 		{
@@ -1678,6 +1739,10 @@ internal sealed class MainWindowController
 		{
 			return;
 		}
+		if (!EnsureCodexClosedForConversationWrite())
+		{
+			return;
+		}
 		bool deletingSubagent = session.IsSubagent;
 		string projectPath = ConversationStorage.ResolveProjectPath(session, selectedProject);
 		int relatedConversationCount = CountRelatedConversations(projectPath);
@@ -1705,7 +1770,7 @@ internal sealed class MainWindowController
 			ProjectDeleteMode.Permanent => "\n项目：永久递归删除（不可恢复）",
 			_ => "\n项目：保留不动"
 		};
-		MessageBoxResult answer = AppDialog.ShowCompat(window, "请确认本次操作：\n\n" + session.DisplayTitle + "\n\n" + conversationSummary + projectSummary + "\n\n完成后需要完全退出并重新打开 Codex，使侧边栏刷新。", deletingSubagent ? "确认删除子代理对话" : "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Exclamation);
+		MessageBoxResult answer = AppDialog.ShowCompat(window, "请确认本次操作：\n\n" + session.DisplayTitle + "\n\n" + conversationSummary + projectSummary + "\n\n本次操作会同步更新会话文件与 Codex 侧边栏索引。", deletingSubagent ? "确认删除子代理对话" : "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Exclamation);
 		if (answer != MessageBoxResult.Yes)
 		{
 			return;
@@ -1774,7 +1839,7 @@ internal sealed class MainWindowController
 		{
 			completion += operation.ProjectSucceeded ? (operation.ProjectMode == ProjectDeleteMode.RecycleBin ? "\n\n项目已移入 Windows 回收站。" : "\n\n项目已永久删除。") : "\n\n会话操作已完成，但项目处理失败：\n" + operation.ProjectError;
 		}
-		completion += "\n\n请完全退出并重新打开 Codex，使侧边栏刷新。";
+		completion += "\n\n重新打开 Codex 后，该会话不会再出现在侧边栏。";
 		SetStatus(operation.ProjectSucceeded ? (operation.Conversation.PermanentlyDeleted ? "会话已永久删除。" : "会话已移入软件回收站。") : "会话已删除，但项目处理失败。", error: !operation.ProjectSucceeded);
 		AppDialog.ShowCompat(window, completion, operation.ProjectSucceeded ? "删除完成" : "部分完成", MessageBoxButton.OK, operation.ProjectSucceeded ? MessageBoxImage.Asterisk : MessageBoxImage.Warning);
 	}
@@ -1782,6 +1847,10 @@ internal sealed class MainWindowController
 	private async Task DeleteSelectedSessionsAsync()
 	{
 		if (isBusy || selectedProject == null)
+		{
+			return;
+		}
+		if (!EnsureCodexClosedForConversationWrite())
 		{
 			return;
 		}
@@ -1865,7 +1934,7 @@ internal sealed class MainWindowController
 		{
 			resultText += "\n\n有 " + errors.Count + " 个处理失败：\n" + string.Join("\n", errors.Take(8));
 		}
-		resultText += "\n\n请完全退出并重新打开 Codex，使侧边栏刷新。";
+		resultText += "\n\n重新打开 Codex 后，已删除的会话不会再出现在侧边栏。";
 		SetStatus(errors.Count == 0 ? "所选" + typeLabel + "已处理。" : "部分所选" + typeLabel + "处理失败。", error: errors.Count > 0);
 		AppDialog.ShowCompat(window, resultText, errors.Count == 0 ? "所选" + typeLabel + "处理完成" : typeLabel + "部分处理完成", MessageBoxButton.OK, errors.Count == 0 ? MessageBoxImage.Asterisk : MessageBoxImage.Warning);
 	}
@@ -1904,6 +1973,10 @@ internal sealed class MainWindowController
 			}
 			if (request.Action == TrashAction.Restore)
 			{
+				if (!EnsureCodexClosedForConversationWrite())
+				{
+					continue;
+				}
 				MessageBoxResult answer = AppDialog.ShowCompat(window, "把这个会话恢复到原位置吗？\n\n" + request.Item.DisplayTitle + "\n\n" + request.Item.OriginalPath, "恢复会话", MessageBoxButton.YesNo, MessageBoxImage.Question);
 				if (answer != MessageBoxResult.Yes)
 				{
@@ -1913,9 +1986,9 @@ internal sealed class MainWindowController
 				try
 				{
 					await Task.Run(() => ConversationStorage.Restore(request.Item));
-					SetStatus("会话已恢复；请重新启动 Codex 刷新侧边栏。", error: false);
+					SetStatus("会话及侧边栏索引均已恢复。", error: false);
 					await RefreshDataAsync();
-					AppDialog.ShowCompat(window, "会话已恢复到原位置。\n\n请完全退出并重新打开 Codex，使侧边栏刷新。", "恢复完成", MessageBoxButton.OK, MessageBoxImage.Asterisk);
+					AppDialog.ShowCompat(window, "会话已恢复到原位置，侧边栏索引也已重新登记。\n\n重新打开 Codex 后即可查看。", "恢复完成", MessageBoxButton.OK, MessageBoxImage.Asterisk);
 				}
 				catch (Exception ex)
 				{
@@ -1930,6 +2003,10 @@ internal sealed class MainWindowController
 			}
 			if (request.Action == TrashAction.DeletePermanently)
 			{
+				if (!EnsureCodexClosedForConversationWrite())
+				{
+					continue;
+				}
 				MessageBoxResult answer = AppDialog.ShowCompat(window, "永久删除这个回收站会话备份吗？\n\n" + request.Item.DisplayTitle + "\n\n删除后无法从本工具恢复。", "永久删除回收站备份", MessageBoxButton.YesNo, MessageBoxImage.Exclamation);
 				if (answer != MessageBoxResult.Yes)
 				{
@@ -2002,6 +2079,21 @@ internal sealed class MainWindowController
 					SetBusy(busy: false, null);
 				}
 			}
+		}
+	}
+
+	private bool EnsureCodexClosedForConversationWrite()
+	{
+		try
+		{
+			CodexDesktopProjectRegistry.EnsureImportCanWrite(CodexCatalog.ResolveCodexHome());
+			return true;
+		}
+		catch (Exception ex)
+		{
+			SetStatus("请先完全退出 Codex，再执行会话删除或恢复。", error: true);
+			AppDialog.ShowCompat(window, ex.Message, "请先退出 Codex", MessageBoxButton.OK, MessageBoxImage.Warning);
+			return false;
 		}
 	}
 

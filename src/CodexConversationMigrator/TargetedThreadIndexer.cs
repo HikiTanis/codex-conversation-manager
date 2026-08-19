@@ -67,6 +67,38 @@ internal static class TargetedThreadIndexer
 		return IndexImportedSessionsCore(codexHome, bundlePaths, filesBeforeImport, copiesOnly, null, requiredCwdByBundle, titleHints);
 	}
 
+	public static ThreadIndexMetadata ReadMetadataForIndexing(string path, string title, string preview)
+	{
+		return ReadMetadata(path, new BundleDescriptor
+		{
+			Id = string.Empty,
+			Title = title,
+			Preview = preview,
+			FirstUserMessage = title
+		});
+	}
+
+	public static TargetedIndexResult IndexSessionFile(string codexHome, string path, string title, string preview)
+	{
+		if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+		{
+			throw new FileNotFoundException("找不到需要重新登记的会话文件。", path);
+		}
+		return RegisterMetadata(codexHome, new ThreadIndexMetadata[1]
+		{
+			ReadMetadataForIndexing(path, title, preview)
+		});
+	}
+
+	public static TargetedIndexResult IndexMetadata(string codexHome, ThreadIndexMetadata metadata)
+	{
+		if (metadata == null || string.IsNullOrWhiteSpace(metadata.Id))
+		{
+			throw new InvalidDataException("需要重新登记的会话元数据无效。");
+		}
+		return RegisterMetadata(codexHome, new ThreadIndexMetadata[1] { metadata });
+	}
+
 	private static TargetedIndexResult IndexImportedSessionsCore(string codexHome, IEnumerable<string> bundlePaths, ISet<string> filesBeforeImport, bool copiesOnly, string requiredCwd, IDictionary<string, string> requiredCwdByBundle, IDictionary<string, string> titleHints)
 	{
 		List<BundleDescriptor> list = ReadBundleDescriptors(bundlePaths, titleHints);
@@ -148,8 +180,14 @@ internal static class TargetedThreadIndexer
 			targetedIndexResult.IndexedCount = 0;
 			return targetedIndexResult;
 		}
-		TargetedIndexResult result = WinSqliteMaintenance.UpsertImportedThreads(codexHome, list2);
-		DesktopProjectRegistrationResult desktop = CodexDesktopProjectRegistry.RegisterImportedThreads(codexHome, list2);
+		return RegisterMetadata(codexHome, list2);
+	}
+
+	private static TargetedIndexResult RegisterMetadata(string codexHome, IEnumerable<ThreadIndexMetadata> metadata)
+	{
+		List<ThreadIndexMetadata> list = (metadata ?? Enumerable.Empty<ThreadIndexMetadata>()).ToList();
+		TargetedIndexResult result = WinSqliteMaintenance.UpsertImportedThreads(codexHome, list);
+		DesktopProjectRegistrationResult desktop = CodexDesktopProjectRegistry.RegisterImportedThreads(codexHome, list);
 		result.DesktopStateFound = desktop.StateFileFound;
 		result.DesktopAssignmentExpectedCount = desktop.ExpectedThreadCount;
 		result.DesktopAssignmentVerifiedCount = desktop.VerifiedThreadCount;

@@ -858,6 +858,11 @@ internal static class Program
 			{
 				throw new InvalidOperationException("safe delete test failed");
 			}
+			if (WinSqliteReader.ReadThreads(databasePath).Any((DbThread item) => string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)) || !File.Exists(deletedSessionResult.BackupPath + ".delete-info.json"))
+			{
+				throw new InvalidOperationException("safe delete left the conversation visible in the thread index");
+			}
+			AssertDesktopThreadAbsentForTest(Path.Combine(text, ".codex-global-state.json"), testThreadId);
 			TrashSessionInfo trashSessionInfo = ConversationStorage.ReadTrash().Single((TrashSessionInfo item) => string.Equals(item.ThreadId, testThreadId, StringComparison.OrdinalIgnoreCase));
 			if (!string.Equals(TextHelpers.CanonicalPath(trashSessionInfo.ProjectPath), TextHelpers.CanonicalPath(newProject), StringComparison.OrdinalIgnoreCase))
 			{
@@ -873,8 +878,18 @@ internal static class Program
 			{
 				throw new InvalidOperationException("trash restore test failed");
 			}
+			if (!WinSqliteReader.ReadThreads(databasePath).Any((DbThread item) => string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)))
+			{
+				throw new InvalidOperationException("trash restore did not rebuild the conversation thread index");
+			}
+			AssertDesktopAssignmentForTest(Path.Combine(text, ".codex-global-state.json"), testThreadId, newProject, null, null);
 			DeletedSessionResult deletedSessionResult2 = ConversationStorage.MoveToTrash(session, newProject);
 			TrashSessionInfo trashSessionInfo2 = ConversationStorage.ReadTrash().Single((TrashSessionInfo item) => string.Equals(item.ThreadId, testThreadId, StringComparison.OrdinalIgnoreCase));
+			if (WinSqliteReader.ReadThreads(databasePath).Any((DbThread item) => string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)))
+			{
+				throw new InvalidOperationException("second trash delete left the thread index visible");
+			}
+			AssertDesktopThreadAbsentForTest(Path.Combine(text, ".codex-global-state.json"), testThreadId);
 			string trashPurgeCctBackup = text3 + ".cct-bak-1002";
 			File.Copy(deletedSessionResult2.BackupPath, trashPurgeCctBackup);
 			ConversationStorage.DeleteFromTrash(trashSessionInfo2);
@@ -883,13 +898,30 @@ internal static class Program
 				throw new InvalidOperationException("trash permanent purge test failed");
 			}
 			File.WriteAllText(text3, originalSessionContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			TargetedThreadIndexer.IndexSessionFile(text, text3, "功能测试", "真正的问题");
 			string permanentDeleteCctBackup = text3 + ".cct-bak-1003";
 			File.Copy(text3, permanentDeleteCctBackup);
 			DeletedSessionResult deletedSessionResult3 = ConversationStorage.DeletePermanently(session);
-			if (File.Exists(text3) || File.Exists(permanentDeleteCctBackup) || !deletedSessionResult3.PermanentlyDeleted || !string.IsNullOrEmpty(deletedSessionResult3.BackupPath))
+			if (File.Exists(text3) || File.Exists(permanentDeleteCctBackup) || !deletedSessionResult3.PermanentlyDeleted || !string.IsNullOrEmpty(deletedSessionResult3.BackupPath) || WinSqliteReader.ReadThreads(databasePath).Any((DbThread item) => string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)))
 			{
 				throw new InvalidOperationException("direct permanent delete test failed");
 			}
+			AssertDesktopThreadAbsentForTest(Path.Combine(text, ".codex-global-state.json"), testThreadId);
+
+			File.WriteAllText(text3, originalSessionContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			TargetedThreadIndexer.IndexSessionFile(text, text3, "旧失效项测试", "旧失效项测试");
+			File.Delete(text3);
+			List<DbThread> orphanedThreads = ConversationIndexMaintenance.FindOrphanedThreads(text);
+			if (!orphanedThreads.Any((DbThread item) => string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)))
+			{
+				throw new InvalidOperationException("missing rollout file was not detected as a stale sidebar item");
+			}
+			OrphanIndexRepairResult orphanRepair = ConversationIndexMaintenance.RepairSelectedOrphans(text, new string[1] { testThreadId });
+			if (orphanRepair.RepairedCount != 1 || orphanRepair.DesktopRunning || !File.Exists(orphanRepair.IndexBackupPath) || WinSqliteReader.ReadThreads(databasePath).Any((DbThread item) => string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)))
+			{
+				throw new InvalidOperationException("confirmed stale sidebar item repair test failed");
+			}
+			AssertDesktopThreadAbsentForTest(Path.Combine(text, ".codex-global-state.json"), testThreadId);
 			string legacyThreadId = "33333333-3333-4333-8333-333333333333";
 			string legacyActive = Path.Combine(text2, "rollout-2026-01-04T03-04-05-" + legacyThreadId + ".jsonl");
 			string legacyContents = fixtureContents.Replace(testThreadId, legacyThreadId).Replace("真正的问题", "旧版安全快照测试");
@@ -1120,7 +1152,7 @@ internal static class Program
 			{
 				throw new InvalidOperationException("project payload traversal guard test failed");
 			}
-			return "ImportModes=origin-merge+independent-copy · SamePathMap=skipped · FormalBackup=.codexchat+.codexproject+legacy · CctBak=rollback+commit+delete+legacy-trash · Lineage=origin-persist+project-scope+parent-child+fresh-every-time+ambiguity-guard · IndependentCopy=retained+delete-isolated · TargetedIndex=insert+update+two-project-cwd+native-path+visibility · DesktopProjectState=existing-remap+create+multi-project+backup+verify · BackupPrewrite=OK · BackfillUnchanged=complete · PendingRunningGuard=OK · ZstdPreflight=OK · Preview=2 messages · Trash=move+list+restore+purge · PermanentDelete=OK · ProjectGuard+Permanent=OK · ProjectPayload=schema5+two-targets+target-guard+combined-pack+create+inspect+restore+skip+backup+traversal-guard · ResizeGrips=8";
+			return "ImportModes=origin-merge+independent-copy · SamePathMap=skipped · FormalBackup=.codexchat+.codexproject+legacy · CctBak=rollback+commit+delete+legacy-trash · Lineage=origin-persist+project-scope+parent-child+fresh-every-time+ambiguity-guard · IndependentCopy=retained+delete-isolated · TargetedIndex=insert+update+two-project-cwd+native-path+visibility · DesktopProjectState=existing-remap+create+multi-project+backup+verify · BackupPrewrite=OK · BackfillUnchanged=complete · PendingRunningGuard=OK · ZstdPreflight=OK · Preview=2 messages · Trash=move+index-remove+list+index-restore+purge · PermanentDelete=index-remove · StaleSidebar=detect+confirmed-repair · ProjectGuard+Permanent=OK · ProjectPayload=schema5+two-targets+target-guard+combined-pack+create+inspect+restore+skip+backup+traversal-guard · ResizeGrips=8";
 		}
 		finally
 		{
@@ -1163,6 +1195,7 @@ internal static class Program
 		Dictionary<string, object> assignments = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
 		Dictionary<string, object> hints = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
 		Dictionary<string, object> writableRoots = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+		Dictionary<string, object> atoms = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
 		object[] projectless = new object[0];
 		if (!string.IsNullOrWhiteSpace(assignedThreadId))
 		{
@@ -1176,6 +1209,11 @@ internal static class Program
 			hints[assignedThreadId] = assignedCwd;
 			writableRoots[assignedThreadId] = new object[2] { assignedCwd, "C:\\keep-root" };
 			projectless = new object[1] { assignedThreadId };
+			atoms["heartbeat-thread-permissions-by-id"] = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase)
+			{
+				{ assignedThreadId, true }
+			};
+			atoms["thread-tab-routes-v1:" + Uri.EscapeDataString("local:" + assignedThreadId)] = new object[1] { "conversation" };
 		}
 		Dictionary<string, object> state = new Dictionary<string, object>
 		{
@@ -1185,7 +1223,8 @@ internal static class Program
 			{ "thread-project-assignments", assignments },
 			{ "projectless-thread-ids", projectless },
 			{ "thread-workspace-root-hints", hints },
-			{ "thread-writable-roots", writableRoots }
+			{ "thread-writable-roots", writableRoots },
+			{ "electron-persisted-atom-state", atoms }
 		};
 		string json = CctRunner.NewSerializer().Serialize(state);
 		File.WriteAllText(Path.Combine(codexHome, ".codex-global-state.json"), json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
@@ -1226,6 +1265,15 @@ internal static class Program
 			(hints != null && hints.ContainsKey(threadId)))
 		{
 			throw new InvalidOperationException("desktop workspace roots or projectless state were not remapped");
+		}
+	}
+
+	private static void AssertDesktopThreadAbsentForTest(string statePath, string threadId)
+	{
+		string json = File.ReadAllText(statePath, Encoding.UTF8);
+		if (json.IndexOf(threadId, StringComparison.OrdinalIgnoreCase) >= 0)
+		{
+			throw new InvalidOperationException("desktop state still contains a deleted thread reference");
 		}
 	}
 

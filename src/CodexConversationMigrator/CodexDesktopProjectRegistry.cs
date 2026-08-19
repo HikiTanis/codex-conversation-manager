@@ -18,20 +18,17 @@ internal static class CodexDesktopProjectRegistry
 		public string TargetPath { get; set; }
 	}
 
-	public static void EnsureImportCanWrite(string codexHome)
+	public static bool IsDesktopRunning(string codexHome)
 	{
 		string statePath = GetStatePath(codexHome);
 		if (!File.Exists(statePath) || !IsDefaultCodexHome(codexHome))
 		{
-			return;
+			return false;
 		}
 		Process[] processes = Process.GetProcessesByName("ChatGPT");
 		try
 		{
-			if (processes.Any((Process process) => !process.HasExited))
-			{
-				throw new InvalidOperationException("检测到 Codex 桌面端仍在运行。请完全退出 Codex（包括所有窗口）后再正式导入；否则桌面项目归属可能被正在运行的程序覆盖。");
-			}
+			return processes.Any((Process process) => !process.HasExited);
 		}
 		finally
 		{
@@ -39,6 +36,14 @@ internal static class CodexDesktopProjectRegistry
 			{
 				process.Dispose();
 			}
+		}
+	}
+
+	public static void EnsureImportCanWrite(string codexHome)
+	{
+		if (IsDesktopRunning(codexHome))
+		{
+			throw new InvalidOperationException("检测到 Codex 桌面端仍在运行。请完全退出 Codex（包括所有窗口）后再执行删除、恢复或导入；否则侧边栏索引可能被正在运行的程序覆盖。");
 		}
 	}
 
@@ -112,7 +117,7 @@ internal static class CodexDesktopProjectRegistry
 		{
 			throw new IOException("Codex 桌面项目状态在导入期间发生变化，已取消写入。请完全退出 Codex 后重试。");
 		}
-		result.BackupPath = CreateBackup(codexHome, originalBytes);
+		result.BackupPath = CreateBackup(codexHome, originalBytes, "before-import");
 		AtomicReplace(result.StatePath, updatedBytes);
 		try
 		{
@@ -124,6 +129,75 @@ internal static class CodexDesktopProjectRegistry
 			AtomicReplace(result.StatePath, originalBytes);
 			throw;
 		}
+		return result;
+	}
+
+	public static DesktopThreadRemovalResult RemoveThreads(string codexHome, IEnumerable<string> threadIds)
+	{
+		HashSet<string> ids = new HashSet<string>((threadIds ?? Enumerable.Empty<string>()).Where((string id) => !string.IsNullOrWhiteSpace(id)), StringComparer.OrdinalIgnoreCase);
+		DesktopThreadRemovalResult result = new DesktopThreadRemovalResult
+		{
+			StatePath = GetStatePath(codexHome),
+			RequestedCount = ids.Count
+		};
+		if (ids.Count == 0 || !File.Exists(result.StatePath))
+		{
+			return result;
+		}
+		EnsureImportCanWrite(codexHome);
+		result.StateFileFound = true;
+		byte[] originalBytes = File.ReadAllBytes(result.StatePath);
+		Dictionary<string, object> state = DeserializeState(originalBytes, result.StatePath);
+		int removed = 0;
+		foreach (string key in new string[4] { "thread-project-assignments", "thread-projectless-output-directories", "thread-workspace-root-hints", "thread-writable-roots" })
+		{
+			removed += RemoveMapEntries(state, key, ids);
+		}
+		foreach (string key in new string[2] { "projectless-thread-ids", "pinned-thread-ids" })
+		{
+			removed += RemoveListEntries(state, key, ids);
+		}
+		if (state.TryGetValue("electron-persisted-atom-state", out object atomValue) && atomValue != null)
+		{
+			if (!(atomValue is Dictionary<string, object> atoms))
+			{
+				throw new InvalidDataException("Codex 桌面项目状态字段格式异常：electron-persisted-atom-state");
+			}
+			foreach (string key in new string[3] { "heartbeat-thread-permissions-by-id", "client-thread-bindings-v1", "thread-descriptions-v1" })
+			{
+				removed += RemoveMapEntries(atoms, key, ids);
+			}
+			List<string> atomKeys = atoms.Keys.Where((string key) => ids.Any((string id) => IsThreadScopedAtomKey(key, id))).ToList();
+			foreach (string key in atomKeys)
+			{
+				if (atoms.Remove(key))
+				{
+					removed++;
+				}
+			}
+		}
+		if (removed == 0)
+		{
+			return result;
+		}
+		JavaScriptSerializer serializer = CctRunner.NewSerializer();
+		byte[] updatedBytes = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(serializer.Serialize(state));
+		if (!File.ReadAllBytes(result.StatePath).SequenceEqual(originalBytes))
+		{
+			throw new IOException("Codex 桌面项目状态在删除期间发生变化，已取消写入。请完全退出 Codex 后重试。");
+		}
+		result.BackupPath = CreateBackup(codexHome, originalBytes, "before-thread-removal");
+		AtomicReplace(result.StatePath, updatedBytes);
+		try
+		{
+			VerifyThreadsRemoved(result.StatePath, ids);
+		}
+		catch
+		{
+			AtomicReplace(result.StatePath, originalBytes);
+			throw;
+		}
+		result.RemovedReferenceCount = removed;
 		return result;
 	}
 
@@ -167,6 +241,109 @@ internal static class CodexDesktopProjectRegistry
 			throw new InvalidDataException("无法读取 Codex 桌面项目状态，未进行任何修改：" + path, ex);
 		}
 		throw new InvalidDataException("Codex 桌面项目状态不是有效的 JSON 对象，未进行任何修改：" + path);
+	}
+
+	private static int RemoveMapEntries(Dictionary<string, object> root, string key, ISet<string> ids)
+	{
+		if (!root.TryGetValue(key, out object value) || value == null)
+		{
+			return 0;
+		}
+		if (!(value is Dictionary<string, object> map))
+		{
+			throw new InvalidDataException("Codex 桌面项目状态字段格式异常：" + key);
+		}
+		int removed = 0;
+		foreach (string id in ids)
+		{
+			if (map.Remove(id))
+			{
+				removed++;
+			}
+		}
+		return removed;
+	}
+
+	private static int RemoveListEntries(Dictionary<string, object> root, string key, ISet<string> ids)
+	{
+		if (!root.TryGetValue(key, out object value) || value == null)
+		{
+			return 0;
+		}
+		List<object> list;
+		if (value is object[] array)
+		{
+			list = array.ToList();
+		}
+		else if (value is IEnumerable enumerable && !(value is string))
+		{
+			list = enumerable.Cast<object>().ToList();
+		}
+		else
+		{
+			throw new InvalidDataException("Codex 桌面项目状态字段格式异常：" + key);
+		}
+		int before = list.Count;
+		list.RemoveAll((object item) => ids.Contains(Convert.ToString(item)));
+		root[key] = list;
+		return before - list.Count;
+	}
+
+	private static bool IsThreadScopedAtomKey(string key, string threadId)
+	{
+		if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(threadId))
+		{
+			return false;
+		}
+		string[] prefixes = new string[5]
+		{
+			"codex-writing-block-deleted-thread-v1:",
+			"thread-browser-tabs-v1:",
+			"thread-client-id-v1:",
+			"thread-reference-capability:",
+			"thread-tab-routes-v1:"
+		};
+		if (!prefixes.Any((string prefix) => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+		{
+			return false;
+		}
+		return key.IndexOf(threadId, StringComparison.OrdinalIgnoreCase) >= 0 || key.IndexOf(Uri.EscapeDataString("local:" + threadId), StringComparison.OrdinalIgnoreCase) >= 0;
+	}
+
+	private static void VerifyThreadsRemoved(string statePath, ISet<string> ids)
+	{
+		Dictionary<string, object> state = DeserializeState(File.ReadAllBytes(statePath), statePath);
+		foreach (string id in ids)
+		{
+			foreach (string key in new string[4] { "thread-project-assignments", "thread-projectless-output-directories", "thread-workspace-root-hints", "thread-writable-roots" })
+			{
+				if (state.TryGetValue(key, out object value) && value is Dictionary<string, object> map && map.ContainsKey(id))
+				{
+					throw new InvalidDataException("Codex 桌面线程状态删除校验失败：" + id);
+				}
+			}
+			foreach (string key in new string[2] { "projectless-thread-ids", "pinned-thread-ids" })
+			{
+				if (state.TryGetValue(key, out object value) && value is IEnumerable list && !(value is string) && list.Cast<object>().Any((object item) => string.Equals(Convert.ToString(item), id, StringComparison.OrdinalIgnoreCase)))
+				{
+					throw new InvalidDataException("Codex 桌面线程列表删除校验失败：" + id);
+				}
+			}
+			if (state.TryGetValue("electron-persisted-atom-state", out object atomValue) && atomValue is Dictionary<string, object> atoms)
+			{
+				foreach (string key in new string[3] { "heartbeat-thread-permissions-by-id", "client-thread-bindings-v1", "thread-descriptions-v1" })
+				{
+					if (atoms.TryGetValue(key, out object mapValue) && mapValue is Dictionary<string, object> map && map.ContainsKey(id))
+					{
+						throw new InvalidDataException("Codex 桌面线程原子状态删除校验失败：" + id);
+					}
+				}
+				if (atoms.Keys.Any((string key) => IsThreadScopedAtomKey(key, id)))
+				{
+					throw new InvalidDataException("Codex 桌面线程页面状态删除校验失败：" + id);
+				}
+			}
+		}
 	}
 
 	private static Dictionary<string, object> GetObjectMap(Dictionary<string, object> root, string key)
@@ -316,11 +493,11 @@ internal static class CodexDesktopProjectRegistry
 		return verified;
 	}
 
-	private static string CreateBackup(string codexHome, byte[] originalBytes)
+	private static string CreateBackup(string codexHome, byte[] originalBytes, string operation)
 	{
 		string directory = Path.Combine(Path.GetFullPath(codexHome), "conversation-migrator-state-backups", DateTime.Now.ToString("yyyy-MM-dd"));
 		Directory.CreateDirectory(directory);
-		string path = Path.Combine(directory, ".codex-global-state-before-import-" + DateTime.Now.ToString("HHmmss-fff") + "-" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".json");
+		string path = Path.Combine(directory, ".codex-global-state-" + operation + "-" + DateTime.Now.ToString("HHmmss-fff") + "-" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".json");
 		WriteDurably(path, originalBytes);
 		if (!File.ReadAllBytes(path).SequenceEqual(originalBytes))
 		{

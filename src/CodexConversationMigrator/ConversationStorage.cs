@@ -20,8 +20,11 @@ internal static class ConversationStorage
 
 	public static DeletedSessionResult MoveToTrash(SessionInfo session, string projectPath)
 	{
+		string codexHome = CodexCatalog.ResolveCodexHome();
 		string sourcePath = ResolveValidatedSessionPath(session);
-		CctBackupMaintenance.DeleteForThread(CodexCatalog.ResolveCodexHome(), session.ThreadId, sourcePath);
+		CodexDesktopProjectRegistry.EnsureImportCanWrite(codexHome);
+		ThreadIndexMetadata indexMetadata = CreateIndexMetadata(session, sourcePath);
+		CctBackupMaintenance.DeleteForThread(codexHome, session.ThreadId, sourcePath);
 		string trashRoot = TrashRoot;
 		string datedDirectory = Path.Combine(trashRoot, DateTime.Now.ToString("yyyy-MM-dd"));
 		Directory.CreateDirectory(datedDirectory);
@@ -34,6 +37,8 @@ internal static class ConversationStorage
 		File.Move(sourcePath, backupPath);
 		try
 		{
+			ThreadIndexRemovalResult indexRemoval;
+			DesktopThreadRemovalResult desktopRemoval;
 			Dictionary<string, object> metadata = new Dictionary<string, object>
 			{
 				{ "schema", 2 },
@@ -43,8 +48,22 @@ internal static class ConversationStorage
 				{ "backup_path", backupPath },
 				{ "project_path", NormalizeOptionalPath(projectPath) },
 				{ "size_bytes", new FileInfo(backupPath).Length },
-				{ "deleted_at", DateTimeOffset.Now.ToString("o") }
+				{ "deleted_at", DateTimeOffset.Now.ToString("o") },
+				{ "preview", session.Preview ?? string.Empty },
+				{ "source", session.Source ?? string.Empty },
+				{ "model_provider", session.ModelProvider ?? string.Empty },
+				{ "cli_version", session.CliVersion ?? string.Empty },
+				{ "created_at", session.CreatedAt ?? string.Empty },
+				{ "updated_at", session.UpdatedAt ?? string.Empty },
+				{ "archived", session.Archived },
+				{ "compressed", session.Compressed },
+				{ "is_subagent", session.IsSubagent },
+				{ "parent_thread_id", session.ParentThreadId ?? string.Empty }
 			};
+			WriteMetadata(backupPath + ".delete-info.json", metadata);
+			RemoveThreadVisibility(codexHome, session.ThreadId, out indexRemoval, out desktopRemoval);
+			metadata["index_backup_path"] = indexRemoval.BackupPath ?? string.Empty;
+			metadata["desktop_state_backup_path"] = desktopRemoval.BackupPath ?? string.Empty;
 			WriteMetadata(backupPath + ".delete-info.json", metadata);
 		}
 		catch (Exception metadataError)
@@ -54,6 +73,14 @@ internal static class ConversationStorage
 				if (File.Exists(backupPath) && !File.Exists(sourcePath))
 				{
 					File.Move(backupPath, sourcePath);
+				}
+				if (File.Exists(sourcePath))
+				{
+					RestoreThreadVisibility(codexHome, indexMetadata, sourcePath);
+				}
+				if (File.Exists(backupPath + ".delete-info.json"))
+				{
+					File.Delete(backupPath + ".delete-info.json");
 				}
 			}
 			catch (Exception rollbackError)
@@ -72,9 +99,28 @@ internal static class ConversationStorage
 
 	public static DeletedSessionResult DeletePermanently(SessionInfo session)
 	{
+		string codexHome = CodexCatalog.ResolveCodexHome();
 		string sourcePath = ResolveValidatedSessionPath(session);
-		CctBackupMaintenance.DeleteForThread(CodexCatalog.ResolveCodexHome(), session.ThreadId, sourcePath);
-		File.Delete(sourcePath);
+		CodexDesktopProjectRegistry.EnsureImportCanWrite(codexHome);
+		ThreadIndexMetadata indexMetadata = CreateIndexMetadata(session, sourcePath);
+		CctBackupMaintenance.DeleteForThread(codexHome, session.ThreadId, sourcePath);
+		RemoveThreadVisibility(codexHome, session.ThreadId, out _, out _);
+		try
+		{
+			File.Delete(sourcePath);
+		}
+		catch (Exception deleteError)
+		{
+			try
+			{
+				RestoreThreadVisibility(codexHome, indexMetadata, sourcePath);
+			}
+			catch (Exception rollbackError)
+			{
+				throw new AggregateException("会话文件删除失败，且侧边栏索引自动回滚失败。", deleteError, rollbackError);
+			}
+			throw;
+		}
 		return new DeletedSessionResult
 		{
 			OriginalPath = sourcePath,
@@ -135,7 +181,17 @@ internal static class ConversationStorage
 					ProjectPath = projectPath,
 					ProjectDeleteMode = Value(metadata, "project_delete_mode"),
 					DeletedAt = deletedAt,
-					SizeBytes = sizeBytes
+					SizeBytes = sizeBytes,
+					Preview = Value(metadata, "preview"),
+					Source = Value(metadata, "source"),
+					ModelProvider = Value(metadata, "model_provider"),
+					CliVersion = Value(metadata, "cli_version"),
+					CreatedAt = Value(metadata, "created_at"),
+					UpdatedAt = Value(metadata, "updated_at"),
+					Archived = BoolValue(metadata, "archived"),
+					Compressed = BoolValue(metadata, "compressed"),
+					IsSubagent = BoolValue(metadata, "is_subagent"),
+					ParentThreadId = Value(metadata, "parent_thread_id")
 				});
 			}
 			catch
@@ -157,6 +213,8 @@ internal static class ConversationStorage
 		{
 			throw new FileNotFoundException("回收站中的会话备份已不存在。", backupPath);
 		}
+		string codexHome = CodexCatalog.ResolveCodexHome();
+		CodexDesktopProjectRegistry.EnsureImportCanWrite(codexHome);
 		string originalPath = ValidateSessionTargetPath(item.OriginalPath);
 		if (File.Exists(originalPath))
 		{
@@ -169,9 +227,31 @@ internal static class ConversationStorage
 		}
 		Directory.CreateDirectory(parent);
 		File.Move(backupPath, originalPath);
-		if (File.Exists(sidecarPath))
+		try
 		{
-			File.Delete(sidecarPath);
+			SessionInfo session = SessionFromTrash(item, originalPath);
+			ThreadIndexMetadata metadata = CreateIndexMetadata(session, originalPath);
+			RestoreThreadVisibility(codexHome, metadata, originalPath);
+			if (File.Exists(sidecarPath))
+			{
+				File.Delete(sidecarPath);
+			}
+		}
+		catch (Exception restoreError)
+		{
+			try
+			{
+				RemoveThreadVisibility(codexHome, item.ThreadId, out _, out _);
+				if (File.Exists(originalPath) && !File.Exists(backupPath))
+				{
+					File.Move(originalPath, backupPath);
+				}
+			}
+			catch (Exception rollbackError)
+			{
+				throw new AggregateException("会话索引恢复失败，且文件自动回滚失败。", restoreError, rollbackError);
+			}
+			throw;
 		}
 		TryDeleteEmptyDirectory(Path.GetDirectoryName(backupPath));
 	}
@@ -182,7 +262,10 @@ internal static class ConversationStorage
 		{
 			throw new ArgumentNullException("item");
 		}
-		CctBackupMaintenance.DeleteForThread(CodexCatalog.ResolveCodexHome(), item.ThreadId, item.OriginalPath);
+		string codexHome = CodexCatalog.ResolveCodexHome();
+		CodexDesktopProjectRegistry.EnsureImportCanWrite(codexHome);
+		CctBackupMaintenance.DeleteForThread(codexHome, item.ThreadId, item.OriginalPath);
+		RemoveThreadVisibility(codexHome, item.ThreadId, out _, out _);
 		string backupPath = ValidateTrashPath(item.BackupPath);
 		string sidecarPath = ValidateTrashPath(item.SidecarPath);
 		if (File.Exists(backupPath))
@@ -412,6 +495,127 @@ internal static class ConversationStorage
 			return string.Empty;
 		}
 		return Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+	}
+
+	private static bool BoolValue(Dictionary<string, object> source, string key)
+	{
+		if (source == null || !source.TryGetValue(key, out object value) || value == null)
+		{
+			return false;
+		}
+		if (value is bool boolean)
+		{
+			return boolean;
+		}
+		return bool.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), out bool parsed) && parsed;
+	}
+
+	private static void RemoveThreadVisibility(string codexHome, string threadId, out ThreadIndexRemovalResult indexRemoval, out DesktopThreadRemovalResult desktopRemoval)
+	{
+		indexRemoval = new ThreadIndexRemovalResult();
+		desktopRemoval = new DesktopThreadRemovalResult();
+		if (string.IsNullOrWhiteSpace(threadId))
+		{
+			return;
+		}
+		CodexDesktopProjectRegistry.EnsureImportCanWrite(codexHome);
+		indexRemoval = WinSqliteMaintenance.RemoveThreads(codexHome, new string[1] { threadId });
+		desktopRemoval = CodexDesktopProjectRegistry.RemoveThreads(codexHome, new string[1] { threadId });
+	}
+
+	private static void RestoreThreadVisibility(string codexHome, ThreadIndexMetadata metadata, string path)
+	{
+		if (metadata == null || string.IsNullOrWhiteSpace(metadata.Id) || string.IsNullOrWhiteSpace(WinSqliteMaintenance.FindActiveDatabase(codexHome)))
+		{
+			return;
+		}
+		metadata.RolloutPath = TextHelpers.ToCodexIndexPath(Path.GetFullPath(path));
+		metadata.Archived = TextHelpers.IsWithin(path, Path.Combine(codexHome, "archived_sessions"));
+		TargetedThreadIndexer.IndexMetadata(codexHome, metadata);
+	}
+
+	private static ThreadIndexMetadata CreateIndexMetadata(SessionInfo session, string path)
+	{
+		try
+		{
+			if (path.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase))
+			{
+				return TargetedThreadIndexer.ReadMetadataForIndexing(path, session.DisplayTitle, session.Preview);
+			}
+		}
+		catch
+		{
+		}
+		DateTime created = ParseUtc(session.CreatedAt, File.GetCreationTimeUtc(path));
+		DateTime updated = session.UpdatedDate != DateTime.MinValue ? session.UpdatedDate.ToUniversalTime() : ParseUtc(session.UpdatedAt, File.GetLastWriteTimeUtc(path));
+		if (updated < created)
+		{
+			updated = created;
+		}
+		long createdMilliseconds = new DateTimeOffset(DateTime.SpecifyKind(created, DateTimeKind.Utc)).ToUnixTimeMilliseconds();
+		long updatedMilliseconds = new DateTimeOffset(DateTime.SpecifyKind(updated, DateTimeKind.Utc)).ToUnixTimeMilliseconds();
+		return new ThreadIndexMetadata
+		{
+			Id = session.ThreadId,
+			RolloutPath = TextHelpers.ToCodexIndexPath(Path.GetFullPath(path)),
+			CreatedAtSeconds = createdMilliseconds / 1000,
+			UpdatedAtSeconds = updatedMilliseconds / 1000,
+			CreatedAtMilliseconds = createdMilliseconds,
+			UpdatedAtMilliseconds = updatedMilliseconds,
+			Source = string.IsNullOrWhiteSpace(session.Source) ? "unknown" : session.Source,
+			ThreadSource = session.IsSubagent ? "subagent" : null,
+			ParentThreadId = session.ParentThreadId,
+			ModelProvider = string.IsNullOrWhiteSpace(session.ModelProvider) ? "openai" : session.ModelProvider,
+			Cwd = TextHelpers.ToCodexIndexPath(session.Cwd ?? string.Empty),
+			CliVersion = session.CliVersion ?? string.Empty,
+			Title = session.DisplayTitle,
+			Preview = string.IsNullOrWhiteSpace(session.Preview) ? session.DisplayTitle : session.Preview,
+			FirstUserMessage = string.IsNullOrWhiteSpace(session.Preview) ? session.DisplayTitle : session.Preview,
+			HasUserEvent = !string.IsNullOrWhiteSpace(session.Preview) || !string.IsNullOrWhiteSpace(session.Title),
+			Archived = session.Archived,
+			GitSha = null,
+			GitBranch = null,
+			GitOriginUrl = null
+		};
+	}
+
+	private static SessionInfo SessionFromTrash(TrashSessionInfo item, string originalPath)
+	{
+		return new SessionInfo
+		{
+			ThreadId = item.ThreadId,
+			SessionPath = originalPath,
+			Cwd = item.ProjectPath,
+			Title = item.Title,
+			Preview = item.Preview,
+			Source = item.Source,
+			ModelProvider = item.ModelProvider,
+			CliVersion = item.CliVersion,
+			CreatedAt = item.CreatedAt,
+			UpdatedAt = item.UpdatedAt,
+			Archived = item.Archived,
+			Compressed = item.Compressed,
+			IsSubagent = item.IsSubagent,
+			ParentThreadId = item.ParentThreadId
+		};
+	}
+
+	private static DateTime ParseUtc(string value, DateTime fallback)
+	{
+		if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeUniversal, out DateTimeOffset parsed))
+		{
+			return parsed.UtcDateTime;
+		}
+		DateTime result = fallback;
+		if (result.Kind == DateTimeKind.Local)
+		{
+			result = result.ToUniversalTime();
+		}
+		else if (result.Kind == DateTimeKind.Unspecified)
+		{
+			result = DateTime.SpecifyKind(result, DateTimeKind.Utc);
+		}
+		return result.Year < 2000 ? DateTime.UtcNow : result;
 	}
 
 	private static string NormalizeOptionalPath(string path)

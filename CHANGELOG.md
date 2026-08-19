@@ -2,7 +2,7 @@
 
 All notable changes are documented here. The project follows semantic versioning for public releases.
 
-## [3.0.0] - 2026-08-10
+## [3.0.0] - 2026-08-19
 
 ### Added
 
@@ -20,6 +20,9 @@ All notable changes are documented here. The project follows semantic versioning
 - Project-folder actions using the Windows Recycle Bin or explicit permanent deletion.
 - Immediate Simplified Chinese and English switching with a remembered preference.
 - Reproducible build, test, packaging, release checksums, CI, and public-project documentation.
+- Transactional conversation deletion across rollout files, the SQLite thread index, subagent edges, and Codex desktop thread state.
+- Thread-index and desktop-project re-registration when restoring a conversation from the app trash.
+- Confirmed repair of legacy broken sidebar entries whose rollout files are already missing.
 
 ### Changed since 2.2.0
 

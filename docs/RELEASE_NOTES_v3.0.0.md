@@ -19,6 +19,8 @@ Version 3.0.0 expands the original conversation-transfer utility into a local Co
 - Choose smart merge by original ID or independent copy with fresh Thread IDs and separate files.
 - View main and subagent conversations separately with consistent selection and deletion controls.
 - Use an app trash for recoverable deletion or permanently purge confirmed-unneeded records to reclaim storage.
+- Keep rollout files, the SQLite thread index, and Codex desktop thread state synchronized during deletion and restoration.
+- Detect legacy broken sidebar entries and remove them only after the user reviews and confirms the cleanup.
 - Use redesigned dialogs, consistent controls, corrected title-bar buttons, and a proper taskbar icon.
 - Switch between Simplified Chinese and English without restarting.
 - Import legacy `.codexpack` and `.codexbundle` files while creating new backups with clearer extensions.
@@ -26,5 +28,7 @@ Version 3.0.0 expands the original conversation-transfer utility into a local Co
 ## Upgrade note
 
 Extract v3.0.0 into a new folder rather than mixing it with an older package. Formal `.codexchat` and `.codexproject` backups are user-managed files and are not deleted when their source conversations are removed from the application.
+
+Exit Codex completely before deleting or restoring conversations, because a running desktop process can overwrite local sidebar state. If an older build already left a sidebar entry whose rollout file is missing, exit Codex, click Refresh in the manager, review the detected titles, and confirm cleanup.
 
 Moving a conversation to the app trash preserves a copy inside the Codex data directory. To reclaim that disk space, permanently purge the record from the app trash after confirming it is no longer needed.
