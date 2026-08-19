@@ -76,8 +76,10 @@ internal static class ConversationIndexMaintenance
 		}
 		ThreadIndexRemovalResult index = WinSqliteMaintenance.RemoveThreads(codexHome, ids);
 		DesktopThreadRemovalResult desktop = CodexDesktopProjectRegistry.RemoveThreads(codexHome, ids);
+		DesktopTaskCacheInvalidationResult cache = CodexDesktopTaskCache.InvalidateThreads(codexHome, ids);
 		result.IndexBackupPath = index.BackupPath;
 		result.DesktopStateBackupPath = desktop.BackupPath;
+		result.ClearedDesktopCacheCount = cache.ClearedDirectoryCount;
 		return result;
 	}
 
@@ -140,12 +142,19 @@ internal static class ConversationIndexMaintenance
 		}
 		ThreadIndexRemovalResult index = WinSqliteMaintenance.RemoveThreads(codexHome, completed);
 		DesktopThreadRemovalResult desktop = CodexDesktopProjectRegistry.RemoveThreads(codexHome, completed);
+		DesktopTaskCacheInvalidationResult cache = CodexDesktopTaskCache.InvalidateThreads(codexHome, completed);
 		if (!string.IsNullOrWhiteSpace(index.BackupPath))
 		{
 			result.IndexBackupPath = index.BackupPath;
 		}
 		result.DesktopStateBackupPath = desktop.BackupPath;
+		result.ClearedDesktopCacheCount = cache.ClearedDirectoryCount;
 		return result;
+	}
+
+	public static DesktopTaskCacheInvalidationResult InvalidateCompletedRepairCaches(string codexHome)
+	{
+		return CodexDesktopTaskCache.InvalidateThreads(codexHome, ReadRepairLedger(codexHome));
 	}
 
 	private static HashSet<string> FindLogConfirmedMissingThreadIds(string backupPath)

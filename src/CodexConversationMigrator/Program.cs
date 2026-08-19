@@ -464,6 +464,7 @@ internal static class Program
 		{
 			Environment.SetEnvironmentVariable("CODEX_HOME", text);
 			ConversationIndexMaintenance.LogRootOverride = Path.Combine(text, "codex-desktop-logs");
+			CodexDesktopTaskCache.UserDataRootOverride = Path.Combine(text, "desktop-web-cache");
 			if (runRealOfficialDelete)
 			{
 				RunRealOfficialThreadDeleteIntegrationTest();
@@ -1083,17 +1084,29 @@ internal static class Program
 			File.WriteAllText(text3, originalSessionContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 			TargetedThreadIndexer.IndexSessionFile(text, text3, "旧失效项测试", "旧失效项测试");
 			File.Delete(text3);
+			string staleTaskCacheDirectory = Path.Combine(CodexDesktopTaskCache.UserDataRootOverride, "Default", "Cache", "Cache_Data");
+			Directory.CreateDirectory(staleTaskCacheDirectory);
+			byte[] staleTaskCacheBytes = new byte[65530 + testThreadId.Length + 16];
+			Encoding.ASCII.GetBytes(testThreadId).CopyTo(staleTaskCacheBytes, 65530);
+			File.WriteAllBytes(Path.Combine(staleTaskCacheDirectory, "data_1"), staleTaskCacheBytes);
 			List<DbThread> orphanedThreads = ConversationIndexMaintenance.FindOrphanedThreads(text);
 			if (!orphanedThreads.Any((DbThread item) => string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)))
 			{
 				throw new InvalidOperationException("missing rollout file was not detected as a stale sidebar item");
 			}
 			OrphanIndexRepairResult orphanRepair = ConversationIndexMaintenance.RepairSelectedOrphans(text, new string[1] { testThreadId });
-			if (orphanRepair.RepairedCount != 1 || orphanRepair.DesktopRunning || !File.Exists(orphanRepair.IndexBackupPath) || WinSqliteReader.ReadThreads(databasePath).Any((DbThread item) => string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)))
+			if (orphanRepair.RepairedCount != 1 || orphanRepair.DesktopRunning || orphanRepair.ClearedDesktopCacheCount != 1 || Directory.Exists(staleTaskCacheDirectory) || !File.Exists(orphanRepair.IndexBackupPath) || WinSqliteReader.ReadThreads(databasePath).Any((DbThread item) => string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)))
 			{
 				throw new InvalidOperationException("confirmed stale sidebar item repair test failed");
 			}
 			AssertDesktopThreadAbsentForTest(Path.Combine(text, ".codex-global-state.json"), testThreadId);
+			Directory.CreateDirectory(staleTaskCacheDirectory);
+			File.WriteAllText(Path.Combine(staleTaskCacheDirectory, "data_1"), "cached-task-list:" + testThreadId, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			DesktopTaskCacheInvalidationResult completedRepairCacheCleanup = ConversationIndexMaintenance.InvalidateCompletedRepairCaches(text);
+			if (completedRepairCacheCleanup.ClearedDirectoryCount != 1 || completedRepairCacheCleanup.MatchedThreadCount != 1 || Directory.Exists(staleTaskCacheDirectory))
+			{
+				throw new InvalidOperationException("completed stale-sidebar repair did not invalidate a persisted desktop task-list cache");
+			}
 
 			string guardedParentId = "88888888-8888-4888-8888-888888888888";
 			string guardedChildId = "99999999-9999-4999-8999-999999999999";
@@ -1411,12 +1424,13 @@ internal static class Program
 			{
 				throw new InvalidOperationException("project payload traversal guard test failed");
 			}
-			return "ImportModes=origin-merge+independent-copy · SamePathMap=skipped · FormalBackup=.codexchat+.codexproject+legacy · CctBak=rollback+commit+delete+legacy-trash · Lineage=origin-persist+project-scope+parent-child+fresh-every-time+ambiguity-guard · IndependentCopy=retained+delete-isolated · TargetedIndex=insert+update+two-project-cwd+native-path+visibility · DesktopProjectState=existing-remap+create+multi-project+backup+verify · BackupPrewrite=OK · BackfillUnchanged=complete · PendingRunningGuard=OK · ZstdPreflight=OK · Preview=2 messages · Trash=copy+official-delete+index-remove+list+index-restore+purge+descendant-staging · PermanentDelete=official-delete+index-remove+descendant-cascade · OfficialDeleteRefusal=preserves-local-data · StaleSidebar=current+log-confirmed-legacy+official-repair+ledger+live-descendant-guard+orphan-subagent-visible+exact-location · ProjectGuard+Permanent=OK · ProjectPayload=schema5+two-targets+target-guard+combined-pack+create+inspect+restore+skip+backup+traversal-guard · ResizeGrips=8";
+			return "ImportModes=origin-merge+independent-copy · SamePathMap=skipped · FormalBackup=.codexchat+.codexproject+legacy · CctBak=rollback+commit+delete+legacy-trash · Lineage=origin-persist+project-scope+parent-child+fresh-every-time+ambiguity-guard · IndependentCopy=retained+delete-isolated · TargetedIndex=insert+update+two-project-cwd+native-path+visibility · DesktopProjectState=existing-remap+create+multi-project+backup+verify · BackupPrewrite=OK · BackfillUnchanged=complete · PendingRunningGuard=OK · ZstdPreflight=OK · Preview=2 messages · Trash=copy+official-delete+index-remove+list+index-restore+purge+descendant-staging · PermanentDelete=official-delete+index-remove+descendant-cascade · OfficialDeleteRefusal=preserves-local-data · StaleSidebar=current+log-confirmed-legacy+official-repair+ledger+live-descendant-guard+orphan-subagent-visible+exact-location+desktop-cache-invalidation+completed-repair-catchup · ProjectGuard+Permanent=OK · ProjectPayload=schema5+two-targets+target-guard+combined-pack+create+inspect+restore+skip+backup+traversal-guard · ResizeGrips=8";
 		}
 		finally
 		{
 			CodexAppServerThreadDeletion.TestOverride = null;
 			ConversationIndexMaintenance.LogRootOverride = null;
+			CodexDesktopTaskCache.UserDataRootOverride = null;
 			Environment.SetEnvironmentVariable("CODEX_HOME", environmentVariable);
 			try
 			{

@@ -643,6 +643,7 @@ internal static class ConversationStorage
 		CodexDesktopProjectRegistry.EnsureImportCanWrite(codexHome);
 		indexRemoval = WinSqliteMaintenance.RemoveThreads(codexHome, ids);
 		desktopRemoval = CodexDesktopProjectRegistry.RemoveThreads(codexHome, ids);
+		CodexDesktopTaskCache.InvalidateThreads(codexHome, ids);
 	}
 
 	private sealed class DeletionTarget

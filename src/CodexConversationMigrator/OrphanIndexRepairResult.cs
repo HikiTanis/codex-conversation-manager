@@ -15,6 +15,8 @@ internal sealed class OrphanIndexRepairResult
 	public string IndexBackupPath { get; set; }
 
 	public string DesktopStateBackupPath { get; set; }
+
+	public int ClearedDesktopCacheCount { get; set; }
 }
 
 internal sealed class LiveDescendantInfo
