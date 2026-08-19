@@ -67,8 +67,9 @@ internal static class ConversationStorage
 				CctBackupMaintenance.DeleteForThread(codexHome, target.Session.ThreadId, target.SourcePath);
 			}
 			ThreadIndexRemovalResult indexRemoval;
+			DesktopCatalogRemovalResult catalogRemoval;
 			DesktopThreadRemovalResult desktopRemoval;
-			RemoveThreadVisibility(codexHome, targets.Select((DeletionTarget target) => target.Session.ThreadId), out indexRemoval, out desktopRemoval);
+			RemoveThreadVisibility(codexHome, targets.Select((DeletionTarget target) => target.Session.ThreadId), out indexRemoval, out catalogRemoval, out desktopRemoval);
 			foreach (DeletionTarget target in targets)
 			{
 				if (File.Exists(target.SourcePath))
@@ -83,6 +84,7 @@ internal static class ConversationStorage
 			foreach (StagedTrashCopy staged in stagedCopies)
 			{
 				staged.Metadata["index_backup_path"] = indexRemoval.BackupPath ?? string.Empty;
+				staged.Metadata["desktop_catalog_backup_path"] = catalogRemoval.BackupPath ?? string.Empty;
 				staged.Metadata["desktop_state_backup_path"] = desktopRemoval.BackupPath ?? string.Empty;
 				WriteMetadata(staged.SidecarPath, staged.Metadata);
 			}
@@ -139,7 +141,7 @@ internal static class ConversationStorage
 		{
 			CctBackupMaintenance.DeleteForThread(codexHome, target.Session.ThreadId, target.SourcePath);
 		}
-		RemoveThreadVisibility(codexHome, targets.Select((DeletionTarget target) => target.Session.ThreadId), out _, out _);
+		RemoveThreadVisibility(codexHome, targets.Select((DeletionTarget target) => target.Session.ThreadId), out _, out _, out _);
 		foreach (DeletionTarget target in targets)
 		{
 			if (File.Exists(target.SourcePath))
@@ -272,7 +274,7 @@ internal static class ConversationStorage
 		{
 			try
 			{
-				RemoveThreadVisibility(codexHome, item.ThreadId, out _, out _);
+				RemoveThreadVisibility(codexHome, item.ThreadId, out _, out _, out _);
 				if (File.Exists(originalPath) && !File.Exists(backupPath))
 				{
 					File.Move(originalPath, backupPath);
@@ -296,7 +298,7 @@ internal static class ConversationStorage
 		string codexHome = CodexCatalog.ResolveCodexHome();
 		CodexDesktopProjectRegistry.EnsureImportCanWrite(codexHome);
 		CctBackupMaintenance.DeleteForThread(codexHome, item.ThreadId, item.OriginalPath);
-		RemoveThreadVisibility(codexHome, item.ThreadId, out _, out _);
+		RemoveThreadVisibility(codexHome, item.ThreadId, out _, out _, out _);
 		string backupPath = ValidateTrashPath(item.BackupPath);
 		string sidecarPath = ValidateTrashPath(item.SidecarPath);
 		if (File.Exists(backupPath))
@@ -626,14 +628,15 @@ internal static class ConversationStorage
 		return bool.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), out bool parsed) && parsed;
 	}
 
-	private static void RemoveThreadVisibility(string codexHome, string threadId, out ThreadIndexRemovalResult indexRemoval, out DesktopThreadRemovalResult desktopRemoval)
+	private static void RemoveThreadVisibility(string codexHome, string threadId, out ThreadIndexRemovalResult indexRemoval, out DesktopCatalogRemovalResult catalogRemoval, out DesktopThreadRemovalResult desktopRemoval)
 	{
-		RemoveThreadVisibility(codexHome, new string[1] { threadId }, out indexRemoval, out desktopRemoval);
+		RemoveThreadVisibility(codexHome, new string[1] { threadId }, out indexRemoval, out catalogRemoval, out desktopRemoval);
 	}
 
-	private static void RemoveThreadVisibility(string codexHome, IEnumerable<string> threadIds, out ThreadIndexRemovalResult indexRemoval, out DesktopThreadRemovalResult desktopRemoval)
+	private static void RemoveThreadVisibility(string codexHome, IEnumerable<string> threadIds, out ThreadIndexRemovalResult indexRemoval, out DesktopCatalogRemovalResult catalogRemoval, out DesktopThreadRemovalResult desktopRemoval)
 	{
 		indexRemoval = new ThreadIndexRemovalResult();
+		catalogRemoval = new DesktopCatalogRemovalResult();
 		desktopRemoval = new DesktopThreadRemovalResult();
 		string[] ids = (threadIds ?? Enumerable.Empty<string>()).Where((string id) => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 		if (ids.Length == 0)
@@ -642,6 +645,7 @@ internal static class ConversationStorage
 		}
 		CodexDesktopProjectRegistry.EnsureImportCanWrite(codexHome);
 		indexRemoval = WinSqliteMaintenance.RemoveThreads(codexHome, ids);
+		catalogRemoval = WinSqliteMaintenance.RemoveDesktopCatalogThreads(codexHome, ids);
 		desktopRemoval = CodexDesktopProjectRegistry.RemoveThreads(codexHome, ids);
 		CodexDesktopTaskCache.InvalidateThreads(codexHome, ids);
 	}

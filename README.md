@@ -44,7 +44,7 @@ After a project is renamed or moved on the same computer, its conversations can 
 ### Inspection, trash, and deletion
 
 - Moves selected conversations to the app trash for later restoration or permanent deletion.
-- Calls Codex's official `thread/delete` interface before touching local conversation data, then updates the session file, SQLite thread index, desktop state, and any matching desktop task-list cache only after official deletion succeeds. If the official interface is unavailable, the original conversation is preserved.
+- Calls Codex's official `thread/delete` interface before touching local conversation data, then updates the session file, local task indexes, desktop project state, and matching sidebar records only after official deletion succeeds. If the official interface is unavailable, the original conversation is preserved.
 - Codex deletes spawned descendant threads together with their parent. The application resolves the full parent-child graph first: app-trash deletion stages a separate recoverable copy for every affected descendant, while permanent deletion shows the complete impact count before confirmation.
 - Re-registers the thread index and desktop project association when a conversation is restored from the app trash.
 - Permanently deletes unneeded main or subagent conversations.
@@ -52,7 +52,7 @@ After a project is renamed or moved on the same computer, its conversations can 
 - Moves a project folder to the Windows Recycle Bin or permanently deletes it after explicit confirmation.
 - Repairs both index orphans and older partial deletions where the file and current index row are already gone but Codex still shows the task. Legacy candidates must be confirmed by both a recent Codex `rollout_not_found` log and the latest pre-deletion index backup before they are offered for review.
 - Shows surviving descendants whose parent conversation is gone in an **Orphaned subagents** project instead of hiding the project. During stale-parent repair, safe records are handled first; the application then switches to the correct project, opens the Subagents view, searches the exact Thread ID, and selects the blocking descendant. Move it to app trash and refresh again to finish the parent cleanup.
-- Repairs already-deleted tasks that remain visible only because an older Codex desktop response is still cached. The cache is invalidated only when Codex is fully closed and an exact, previously confirmed deleted Thread ID is present; sign-in data, valid tasks, and project files are not cleared.
+- Repairs already-deleted tasks that still appear in the Codex desktop sidebar or a cached task list. Cleanup runs only when Codex is fully closed and only for exact, previously confirmed deleted Thread IDs; it does not clear sign-in data, valid tasks, or project files.
 
 > **Freeing space on drive C:** the app trash is stored inside the Codex data directory. Moving records there protects against accidental deletion but does not materially reclaim space on that drive. Permanently purge confirmed-unneeded records from the app trash to release their storage.
 
@@ -97,7 +97,7 @@ If the CLI cannot be found or official deletion is rejected, the application sto
 1. Select a project, then switch between **Main conversations** and **Subagent conversations**.
 2. Review the latest update time, size, Thread ID, path, or read-only conversation content.
 3. Select individual records or use Select all, then choose **Delete selected**. If a main conversation has spawned descendants, the confirmation shows the additional impact count.
-4. Exit Codex before confirming deletion or restoration. If an older version left a broken sidebar item, open it once in Codex so the failure is recorded, exit Codex completely, then open this application and click **Refresh**. Review the title and Thread ID before confirming repair. If the thread and index were already removed but the item is still visible, Refresh also invalidates the matching desktop task-list cache and reports when it is safe to reopen Codex.
+4. Exit Codex before confirming deletion or restoration. If an older version left a broken sidebar item, open it once in Codex so the failure is recorded, exit Codex completely, then open this application and click **Refresh**. Review the title and Thread ID before confirming repair. If the conversation is already gone but its sidebar item remains, Refresh completes the matching sidebar cleanup before reporting that Codex can be reopened.
 5. Use the app trash when recovery may be needed; permanently purge confirmed-unneeded records when storage must be reclaimed.
 
 ## Typical workflows

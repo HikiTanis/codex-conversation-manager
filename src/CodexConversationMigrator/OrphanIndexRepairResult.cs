@@ -16,6 +16,10 @@ internal sealed class OrphanIndexRepairResult
 
 	public string DesktopStateBackupPath { get; set; }
 
+	public string DesktopCatalogBackupPath { get; set; }
+
+	public int RemovedDesktopCatalogCount { get; set; }
+
 	public int ClearedDesktopCacheCount { get; set; }
 }
 

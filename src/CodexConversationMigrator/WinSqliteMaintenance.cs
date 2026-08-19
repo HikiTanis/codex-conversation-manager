@@ -342,6 +342,206 @@ internal static class WinSqliteMaintenance
 		}
 	}
 
+	public static DesktopCatalogRemovalResult RemoveDesktopCatalogThreads(string codexHome, IEnumerable<string> threadIds)
+	{
+		List<string> ids = (threadIds ?? Enumerable.Empty<string>())
+			.Where((string id) => Guid.TryParse(id, out _))
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.ToList();
+		DesktopCatalogRemovalResult result = new DesktopCatalogRemovalResult
+		{
+			RequestedCount = ids.Count,
+			DatabasePath = FindDesktopCatalogDatabase(codexHome)
+		};
+		if (ids.Count == 0 || string.IsNullOrWhiteSpace(result.DatabasePath))
+		{
+			return result;
+		}
+		IntPtr db = IntPtr.Zero;
+		try
+		{
+			if (sqlite3_open_v2(Utf8(result.DatabasePath), out db, SQLITE_OPEN_READWRITE, IntPtr.Zero) != SQLITE_OK)
+			{
+				throw new InvalidDataException("无法打开 Codex 桌面任务目录：" + Error(db));
+			}
+			sqlite3_busy_timeout(db, 8000);
+			if (!TableExists(db, "local_thread_catalog"))
+			{
+				return result;
+			}
+			string idList = string.Join(",", ids.Select(SqlText).ToArray());
+			string predicate = "thread_id in (" + idList + ")";
+			int existingCatalogEntries = ScalarInt(db, "select count(*) from local_thread_catalog where " + predicate);
+			int existingTimelineEntries = TableExists(db, "thread_timeline_ledger") ? ScalarInt(db, "select count(*) from thread_timeline_ledger where " + predicate) : 0;
+			if (existingCatalogEntries == 0 && existingTimelineEntries == 0)
+			{
+				return result;
+			}
+			CodexDesktopProjectRegistry.EnsureImportCanWrite(codexHome);
+			string dataVersion = Scalar(db, "pragma data_version");
+			bool hasCatalogMetadata = TableExists(db, "local_thread_catalog_metadata") && ScalarInt(db, "select count(*) from local_thread_catalog_metadata where id=1") == 1;
+			string catalogRevision = hasCatalogMetadata ? Scalar(db, "select cast(catalog_revision as text) from local_thread_catalog_metadata where id=1") : "absent";
+			string backupPath = CreateConsistentBackup(db, result.DatabasePath, codexHome);
+			if (!string.Equals(IntegrityCheck(backupPath), "ok", StringComparison.OrdinalIgnoreCase))
+			{
+				throw new InvalidDataException("写入前的 Codex 桌面任务目录备份未通过完整性检查，未进行任何修改。");
+			}
+			bool transactionOpen = false;
+			try
+			{
+				Execute(db, "begin immediate;");
+				transactionOpen = true;
+				if (!string.Equals(dataVersion, Scalar(db, "pragma data_version"), StringComparison.Ordinal))
+				{
+					throw new InvalidOperationException("Codex 桌面任务目录在备份期间仍被其他进程更新，已取消删除。请完全退出 Codex 后重试。");
+				}
+				if (hasCatalogMetadata && !string.Equals(catalogRevision, Scalar(db, "select cast(catalog_revision as text) from local_thread_catalog_metadata where id=1"), StringComparison.Ordinal))
+				{
+					throw new InvalidOperationException("Codex 桌面任务目录版本在备份期间发生变化，已取消删除。");
+				}
+				if (TableExists(db, "thread_timeline_ledger"))
+				{
+					Execute(db, "delete from thread_timeline_ledger where " + predicate + ";");
+				}
+				Execute(db, "delete from local_thread_catalog where " + predicate + ";");
+				if (hasCatalogMetadata)
+				{
+					Execute(db, "update local_thread_catalog_metadata set catalog_revision=catalog_revision+1 where id=1;");
+				}
+				if (ScalarInt(db, "select count(*) from local_thread_catalog where " + predicate) != 0)
+				{
+					throw new InvalidDataException("Codex 新版侧边栏目录删除校验失败，事务已回滚。");
+				}
+				if (TableExists(db, "thread_timeline_ledger") && ScalarInt(db, "select count(*) from thread_timeline_ledger where " + predicate) != 0)
+				{
+					throw new InvalidDataException("Codex 任务时间线目录删除校验失败，事务已回滚。");
+				}
+				if (!string.Equals(Scalar(db, "pragma integrity_check"), "ok", StringComparison.OrdinalIgnoreCase))
+				{
+					throw new InvalidDataException("Codex 桌面任务目录完整性检查未通过，事务已回滚。");
+				}
+				Execute(db, "commit;");
+				transactionOpen = false;
+			}
+			catch
+			{
+				if (transactionOpen)
+				{
+					try
+					{
+						Execute(db, "rollback;");
+					}
+					catch
+					{
+					}
+				}
+				throw;
+			}
+			result.BackupPath = backupPath;
+			result.RemovedCatalogEntryCount = existingCatalogEntries;
+			result.RemovedTimelineEntryCount = existingTimelineEntries;
+			return result;
+		}
+		finally
+		{
+			if (db != IntPtr.Zero)
+			{
+				sqlite3_close_v2(db);
+			}
+		}
+	}
+
+	public static string FindDesktopCatalogDatabase(string codexHome)
+	{
+		if (string.IsNullOrWhiteSpace(codexHome) || !Directory.Exists(codexHome))
+		{
+			return string.Empty;
+		}
+		string path = Path.GetFullPath(Path.Combine(codexHome, "sqlite", "codex-dev.db"));
+		return File.Exists(path) ? path : string.Empty;
+	}
+
+	public static int CountDesktopCatalogThreads(string codexHome, IEnumerable<string> threadIds)
+	{
+		string databasePath = FindDesktopCatalogDatabase(codexHome);
+		string[] ids = (threadIds ?? Enumerable.Empty<string>()).Where((string id) => Guid.TryParse(id, out _)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+		if (string.IsNullOrWhiteSpace(databasePath) || ids.Length == 0)
+		{
+			return 0;
+		}
+		IntPtr db = IntPtr.Zero;
+		try
+		{
+			if (sqlite3_open_v2(Utf8(databasePath), out db, SQLITE_OPEN_READONLY, IntPtr.Zero) != SQLITE_OK)
+			{
+				throw new InvalidDataException("无法读取 Codex 桌面任务目录：" + Error(db));
+			}
+			if (!TableExists(db, "local_thread_catalog"))
+			{
+				return 0;
+			}
+			return ScalarInt(db, "select count(*) from local_thread_catalog where thread_id in (" + string.Join(",", ids.Select(SqlText).ToArray()) + ")");
+		}
+		finally
+		{
+			if (db != IntPtr.Zero)
+			{
+				sqlite3_close_v2(db);
+			}
+		}
+	}
+
+	public static void CreateDesktopCatalogTestDatabase(string codexHome)
+	{
+		string directory = Path.Combine(codexHome, "sqlite");
+		Directory.CreateDirectory(directory);
+		string databasePath = Path.Combine(directory, "codex-dev.db");
+		IntPtr db = IntPtr.Zero;
+		try
+		{
+			if (sqlite3_open_v2(Utf8(databasePath), out db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, IntPtr.Zero) != SQLITE_OK)
+			{
+				throw new InvalidDataException(Error(db));
+			}
+			Execute(db, "create table if not exists local_thread_catalog_hosts(host_id text primary key,host_kind text not null);" +
+				"create table if not exists local_thread_catalog_metadata(id integer primary key,catalog_revision integer not null default 0);" +
+				"create table if not exists local_thread_catalog(host_id text not null,thread_id text not null,display_title text not null,source_created_at real not null,source_updated_at real not null,cwd text not null,source_kind text not null,source_detail text,model_provider text not null,git_branch text,observation_sequence integer not null,missing_candidate integer not null default 0,thread_source text,source_recency_at real not null default 0,pending_observed_title integer not null default 0,primary key(host_id,thread_id));" +
+				"create table if not exists thread_timeline_ledger(host_id text not null,thread_id text not null,sequence integer not null,record_id text not null,payload_json text not null,primary key(host_id,thread_id,sequence),unique(host_id,thread_id,record_id)) without rowid;" +
+				"insert or ignore into local_thread_catalog_hosts(host_id,host_kind) values('local','local');" +
+				"insert or ignore into local_thread_catalog_metadata(id,catalog_revision) values(1,0);");
+		}
+		finally
+		{
+			if (db != IntPtr.Zero)
+			{
+				sqlite3_close_v2(db);
+			}
+		}
+	}
+
+	public static void AddDesktopCatalogTestThread(string codexHome, string threadId, string title, string cwd)
+	{
+		CreateDesktopCatalogTestDatabase(codexHome);
+		string databasePath = FindDesktopCatalogDatabase(codexHome);
+		IntPtr db = IntPtr.Zero;
+		try
+		{
+			if (sqlite3_open_v2(Utf8(databasePath), out db, SQLITE_OPEN_READWRITE, IntPtr.Zero) != SQLITE_OK)
+			{
+				throw new InvalidDataException(Error(db));
+			}
+			Execute(db, "insert or replace into local_thread_catalog(host_id,thread_id,display_title,source_created_at,source_updated_at,cwd,source_kind,source_detail,model_provider,git_branch,observation_sequence,missing_candidate,thread_source,source_recency_at,pending_observed_title) values('local'," + SqlText(threadId) + "," + SqlText(title) + ",1,2," + SqlText(cwd) + ",'cli',null,'openai',null,1,0,null,2,0);");
+			Execute(db, "insert or replace into thread_timeline_ledger(host_id,thread_id,sequence,record_id,payload_json) values('local'," + SqlText(threadId) + ",1," + SqlText("test-" + threadId) + ",'{}');");
+		}
+		finally
+		{
+			if (db != IntPtr.Zero)
+			{
+				sqlite3_close_v2(db);
+			}
+		}
+	}
+
 	private static int ScalarInt(IntPtr database, string sql)
 	{
 		if (!int.TryParse(Scalar(database, sql), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))

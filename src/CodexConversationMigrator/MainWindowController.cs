@@ -1251,7 +1251,7 @@ internal sealed class MainWindowController
 			catch (Exception cleanupError)
 			{
 				desktopCacheCleanupError = cleanupError.Message;
-				AppendLog("清理 Codex 桌面任务缓存失败：" + cleanupError.Message);
+				AppendLog("清理 Codex 新版侧边栏目录或任务缓存失败：" + cleanupError.Message);
 			}
 			List<DbThread> orphanedThreads = new List<DbThread>();
 			List<DbThread> deletedSidebarRemnants = new List<DbThread>();
@@ -1319,11 +1319,11 @@ internal sealed class MainWindowController
 			string version = (versionTask.Result.StdOut ?? string.Empty).Trim();
 			cctStatusText.Text = (string.IsNullOrWhiteSpace(version) ? UiLanguage.T("cct 已连接") : version);
 			string cleanupSummary = legacyBackups.MovedToTrashCount == 0 ? string.Empty : $" · 旧版快照已转入回收站 {legacyBackups.MovedToTrashCount} 个，清理重复 {legacyBackups.RedundantDeletedCount} 个";
-			if (completedRepairCacheCleanup.ClearedDirectoryCount > 0)
+			if (completedRepairCacheCleanup.RemovedCatalogEntryCount > 0 || completedRepairCacheCleanup.ClearedDirectoryCount > 0)
 			{
 				cleanupSummary += UiLanguage.IsEnglish
-					? $" · Refreshed {completedRepairCacheCleanup.ClearedDirectoryCount} desktop task cache location(s) for {completedRepairCacheCleanup.MatchedThreadCount} deleted task(s)"
-					: $" · 已刷新桌面任务缓存 {completedRepairCacheCleanup.ClearedDirectoryCount} 处（匹配 {completedRepairCacheCleanup.MatchedThreadCount} 个已删除任务）";
+					? $" · Removed {completedRepairCacheCleanup.RemovedCatalogEntryCount} stale desktop catalog entries; refreshed {completedRepairCacheCleanup.ClearedDirectoryCount} cache location(s)"
+					: $" · 已移除新版侧边栏目录残留 {completedRepairCacheCleanup.RemovedCatalogEntryCount} 个，刷新缓存 {completedRepairCacheCleanup.ClearedDirectoryCount} 处";
 			}
 			if (!string.IsNullOrWhiteSpace(desktopCacheCleanupError))
 			{
@@ -1373,6 +1373,7 @@ internal sealed class MainWindowController
 						{
 							int repairedCount = 0;
 							int clearedDesktopCacheCount = 0;
+							int removedDesktopCatalogCount = 0;
 							bool desktopRestarted = false;
 							List<string> backupPaths = new List<string>();
 							if (repairableOrphans.Count > 0)
@@ -1380,10 +1381,15 @@ internal sealed class MainWindowController
 								OrphanIndexRepairResult currentRepair = await Task.Run(() => ConversationIndexMaintenance.RepairSelectedOrphans(codexHome, repairableOrphans.Select((DbThread thread) => thread.Id)));
 								repairedCount += currentRepair.RepairedCount;
 								clearedDesktopCacheCount += currentRepair.ClearedDesktopCacheCount;
+								removedDesktopCatalogCount += currentRepair.RemovedDesktopCatalogCount;
 								desktopRestarted |= currentRepair.DesktopRunning;
 								if (!string.IsNullOrWhiteSpace(currentRepair.IndexBackupPath))
 								{
 									backupPaths.Add(currentRepair.IndexBackupPath);
+								}
+								if (!string.IsNullOrWhiteSpace(currentRepair.DesktopCatalogBackupPath))
+								{
+									backupPaths.Add(currentRepair.DesktopCatalogBackupPath);
 								}
 							}
 							if (!desktopRestarted && repairableLegacyRemnants.Count > 0)
@@ -1391,10 +1397,15 @@ internal sealed class MainWindowController
 								OrphanIndexRepairResult legacyRepair = await Task.Run(() => ConversationIndexMaintenance.RepairDeletedSidebarRemnants(codexHome, repairableLegacyRemnants.Select((DbThread thread) => thread.Id)));
 								repairedCount += legacyRepair.RepairedCount;
 								clearedDesktopCacheCount += legacyRepair.ClearedDesktopCacheCount;
+								removedDesktopCatalogCount += legacyRepair.RemovedDesktopCatalogCount;
 								desktopRestarted |= legacyRepair.DesktopRunning;
 								if (!string.IsNullOrWhiteSpace(legacyRepair.IndexBackupPath))
 								{
 									backupPaths.Add(legacyRepair.IndexBackupPath);
+								}
+								if (!string.IsNullOrWhiteSpace(legacyRepair.DesktopCatalogBackupPath))
+								{
+									backupPaths.Add(legacyRepair.DesktopCatalogBackupPath);
 								}
 							}
 							if (desktopRestarted)
@@ -1418,8 +1429,8 @@ internal sealed class MainWindowController
 							{
 								orphanSummary = UiLanguage.IsEnglish ? $" · Cleaned stale sidebar entries through the official Codex interface: {repairedCount}" : $" · 已通过 Codex 官方接口清理侧边栏失效项 {repairedCount} 个";
 								AppendLog(UiLanguage.IsEnglish
-									? $"Cleaned stale sidebar entries through the official Codex interface: {repairedCount}; refreshed desktop task cache locations: {clearedDesktopCacheCount}." + (backupPaths.Count == 0 ? string.Empty : " Index backup: " + string.Join("; ", backupPaths.Distinct(StringComparer.OrdinalIgnoreCase)))
-									: $"已通过 Codex 官方接口清理侧边栏失效项 {repairedCount} 个；刷新桌面任务缓存 {clearedDesktopCacheCount} 处。" + (backupPaths.Count == 0 ? string.Empty : "索引备份：" + string.Join("；", backupPaths.Distinct(StringComparer.OrdinalIgnoreCase))));
+									? $"Cleaned stale sidebar entries through the official Codex interface: {repairedCount}; removed desktop catalog entries: {removedDesktopCatalogCount}; refreshed desktop task cache locations: {clearedDesktopCacheCount}." + (backupPaths.Count == 0 ? string.Empty : " Index backup: " + string.Join("; ", backupPaths.Distinct(StringComparer.OrdinalIgnoreCase)))
+									: $"已通过 Codex 官方接口清理侧边栏失效项 {repairedCount} 个；移除新版侧边栏目录记录 {removedDesktopCatalogCount} 个；刷新桌面任务缓存 {clearedDesktopCacheCount} 处。" + (backupPaths.Count == 0 ? string.Empty : "索引备份：" + string.Join("；", backupPaths.Distinct(StringComparer.OrdinalIgnoreCase))));
 							}
 						}
 						catch (Exception repairError)
@@ -1442,21 +1453,21 @@ internal sealed class MainWindowController
 			{
 				orphanSummary = !string.IsNullOrWhiteSpace(orphanDetectionError)
 					? " · 侧边栏失效项检测失败，详见操作记录"
-					: (UiLanguage.IsEnglish ? " · Desktop task cache cleanup is pending; fully exit Codex and refresh again" : " · 桌面任务缓存待清理；请完全退出 Codex 后再次刷新");
+					: (UiLanguage.IsEnglish ? " · Desktop sidebar catalog cleanup is pending; fully exit Codex and refresh again" : " · 新版侧边栏目录待清理；请完全退出 Codex 后再次刷新");
 			}
 			SetStatus($"已载入 {projects.Count} 个项目 · {catalog.MainCount} 个主对话 · {catalog.InternalCount} 个子代理对话 · {catalog.Diagnostic}{cleanupSummary}{orphanSummary}", error: orphanError);
-			if (completedRepairCacheCleanup.ClearedDirectoryCount > 0)
+			if (completedRepairCacheCleanup.RemovedCatalogEntryCount > 0 || completedRepairCacheCleanup.ClearedDirectoryCount > 0)
 			{
 				string cacheMessage = UiLanguage.IsEnglish
-					? $"Removed the stale desktop task-list cache for {completedRepairCacheCleanup.MatchedThreadCount} deleted task(s). You can now reopen Codex; the invalid sidebar entries should no longer appear."
-					: $"已清除 {completedRepairCacheCleanup.MatchedThreadCount} 个已删除任务对应的桌面端任务列表缓存。现在可以重新打开 Codex，失效侧边栏条目应不再显示。";
-				AppDialog.ShowCompat(window, cacheMessage, UiLanguage.IsEnglish ? "Sidebar cache refreshed" : "侧边栏缓存已刷新", MessageBoxButton.OK, MessageBoxImage.Asterisk);
+					? $"Removed {completedRepairCacheCleanup.RemovedCatalogEntryCount} deleted task(s) from the current Codex desktop sidebar catalog and refreshed {completedRepairCacheCleanup.ClearedDirectoryCount} matching cache location(s). You can now reopen Codex; those invalid sidebar entries should be gone."
+					: $"已从当前 Codex 新版侧边栏目录移除 {completedRepairCacheCleanup.RemovedCatalogEntryCount} 个已删除任务，并刷新匹配缓存 {completedRepairCacheCleanup.ClearedDirectoryCount} 处。现在可以重新打开 Codex，这些失效条目应不再显示。";
+				AppDialog.ShowCompat(window, cacheMessage, UiLanguage.IsEnglish ? "Sidebar catalog cleaned" : "侧边栏目录已清理", MessageBoxButton.OK, MessageBoxImage.Asterisk);
 			}
 			else if (!string.IsNullOrWhiteSpace(desktopCacheCleanupError))
 			{
 				string cacheErrorMessage = UiLanguage.IsEnglish
-					? "The deleted task is still present in the Codex desktop task-list cache, but the cache could not be updated yet. Fully exit Codex (make sure no ChatGPT process remains), reopen this application, and click Refresh again."
-					: "已删除任务仍存在于 Codex 桌面任务列表缓存中，但当前还不能更新该缓存。请完全退出 Codex（确认任务管理器中没有 ChatGPT 进程），重新打开本工具并再次点击“刷新”。";
+					? "The deleted task is still present in the current Codex desktop sidebar catalog or cache, but it cannot be updated while Codex is running. Fully exit Codex (make sure no ChatGPT process remains), reopen this application, and click Refresh again."
+					: "已删除任务仍存在于当前 Codex 新版侧边栏目录或缓存中，但 Codex 运行时不能安全更新。请完全退出 Codex（确认任务管理器中没有 ChatGPT 进程），重新打开本工具并再次点击“刷新”。";
 				AppDialog.ShowCompat(window, cacheErrorMessage + Environment.NewLine + Environment.NewLine + desktopCacheCleanupError, UiLanguage.IsEnglish ? "Close Codex to finish cleanup" : "完全退出 Codex 后完成清理", MessageBoxButton.OK, MessageBoxImage.Warning);
 			}
 		}

@@ -15,6 +15,12 @@ internal sealed class DesktopTaskCacheInvalidationResult
 	public List<string> MatchedThreadIds { get; } = new List<string>();
 
 	public List<string> ClearedDirectories { get; } = new List<string>();
+
+	public int RemovedCatalogEntryCount { get; set; }
+
+	public int RemovedTimelineEntryCount { get; set; }
+
+	public string CatalogBackupPath { get; set; }
 }
 
 internal static class CodexDesktopTaskCache

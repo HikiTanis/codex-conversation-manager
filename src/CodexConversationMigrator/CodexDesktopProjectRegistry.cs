@@ -20,8 +20,7 @@ internal static class CodexDesktopProjectRegistry
 
 	public static bool IsDesktopRunning(string codexHome)
 	{
-		string statePath = GetStatePath(codexHome);
-		if (!File.Exists(statePath) || !IsDefaultCodexHome(codexHome))
+		if (!IsDefaultCodexHome(codexHome))
 		{
 			return false;
 		}

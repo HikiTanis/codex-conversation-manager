@@ -2,7 +2,9 @@
 
 All notable changes are documented here. The project follows semantic versioning for public releases.
 
-## [3.0.0] - 2026-08-19
+## [Unreleased]
+
+Planned first public release: v3.0.0.
 
 ### Added
 

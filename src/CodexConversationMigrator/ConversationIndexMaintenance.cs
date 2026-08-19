@@ -75,9 +75,12 @@ internal static class ConversationIndexMaintenance
 			result.RepairedCount++;
 		}
 		ThreadIndexRemovalResult index = WinSqliteMaintenance.RemoveThreads(codexHome, ids);
+		DesktopCatalogRemovalResult catalog = WinSqliteMaintenance.RemoveDesktopCatalogThreads(codexHome, ids);
 		DesktopThreadRemovalResult desktop = CodexDesktopProjectRegistry.RemoveThreads(codexHome, ids);
 		DesktopTaskCacheInvalidationResult cache = CodexDesktopTaskCache.InvalidateThreads(codexHome, ids);
 		result.IndexBackupPath = index.BackupPath;
+		result.DesktopCatalogBackupPath = catalog.BackupPath;
+		result.RemovedDesktopCatalogCount = catalog.RemovedCatalogEntryCount;
 		result.DesktopStateBackupPath = desktop.BackupPath;
 		result.ClearedDesktopCacheCount = cache.ClearedDirectoryCount;
 		return result;
@@ -141,12 +144,15 @@ internal static class ConversationIndexMaintenance
 			result.RepairedCount++;
 		}
 		ThreadIndexRemovalResult index = WinSqliteMaintenance.RemoveThreads(codexHome, completed);
+		DesktopCatalogRemovalResult catalog = WinSqliteMaintenance.RemoveDesktopCatalogThreads(codexHome, completed);
 		DesktopThreadRemovalResult desktop = CodexDesktopProjectRegistry.RemoveThreads(codexHome, completed);
 		DesktopTaskCacheInvalidationResult cache = CodexDesktopTaskCache.InvalidateThreads(codexHome, completed);
 		if (!string.IsNullOrWhiteSpace(index.BackupPath))
 		{
 			result.IndexBackupPath = index.BackupPath;
 		}
+		result.DesktopCatalogBackupPath = catalog.BackupPath;
+		result.RemovedDesktopCatalogCount = catalog.RemovedCatalogEntryCount;
 		result.DesktopStateBackupPath = desktop.BackupPath;
 		result.ClearedDesktopCacheCount = cache.ClearedDirectoryCount;
 		return result;
@@ -154,7 +160,13 @@ internal static class ConversationIndexMaintenance
 
 	public static DesktopTaskCacheInvalidationResult InvalidateCompletedRepairCaches(string codexHome)
 	{
-		return CodexDesktopTaskCache.InvalidateThreads(codexHome, ReadRepairLedger(codexHome));
+		HashSet<string> completedIds = ReadRepairLedger(codexHome);
+		DesktopCatalogRemovalResult catalog = WinSqliteMaintenance.RemoveDesktopCatalogThreads(codexHome, completedIds);
+		DesktopTaskCacheInvalidationResult result = CodexDesktopTaskCache.InvalidateThreads(codexHome, completedIds);
+		result.RemovedCatalogEntryCount = catalog.RemovedCatalogEntryCount;
+		result.RemovedTimelineEntryCount = catalog.RemovedTimelineEntryCount;
+		result.CatalogBackupPath = catalog.BackupPath;
+		return result;
 	}
 
 	private static HashSet<string> FindLogConfirmedMissingThreadIds(string backupPath)
