@@ -19,8 +19,8 @@ internal static class UiEnglishCatalog2
 		{ " 个文件", " files" },
 		{ " 个通过", " passed" },
 		{ " 条通过", " passed" },
-		{ " 条会话索引路径已核验。", " conversation index paths verified." },
-		{ " 条索引路径、", " index paths and " },
+		{ " 条会话索引兼容性已核验。", " conversation index compatibility checks verified." },
+		{ " 条索引兼容性、", " index compatibility checks and " },
 		{ " 条桌面项目归属均已核验。", " desktop project assignments verified." },
 		{ " 条主对话通过", " main conversations passed" },
 		{ " 个（", " (" },
@@ -40,7 +40,7 @@ internal static class UiEnglishCatalog2
 		{ "，但后续会话导入未完成。修复问题后可以重新导入同一迁移包。", ", but conversation import did not complete. Fix the issue and import the same package again." },
 		{ "桌面项目归属：未检测到桌面状态文件，已跳过", "Desktop project assignment: no desktop state file was found; skipped" },
 		{ "桌面项目归属：", "Desktop project assignment: " },
-		{ "索引路径验证：", "Index path verification: " },
+		{ "索引兼容性验证：", "Index compatibility verification: " },
 
 		{ "2 个项目 + 对话完整包 · 11 个主对话", "2-project complete package · 11 main conversations" },
 		{ "3 / 4 · 导入对话", "3 / 4 · Import conversations" },
@@ -136,7 +136,7 @@ internal static class UiEnglishCatalog2
 		{ "正在压缩项目文件 ", "Compressing project file " },
 		{ "正在导入第 2/4 个对话包；文件处理在后台执行，界面仍可响应。", "Importing conversation bundle 2/4 in the background; the app remains responsive." },
 		{ "只导入对话时，目标项目目录必须已经存在：", "When importing conversations only, the destination project folder must already exist:" },
-		{ "；项目路径已使用原生索引格式。", "; project paths use the native index format." },
+		{ "；项目路径与会话历史模式均已核对。", "; project paths and conversation history modes were both verified." },
 		{ "未检测到 Codex 桌面项目状态文件；已按 CLI 环境跳过桌面侧栏项目归属。", "No Codex desktop project state file was found; desktop sidebar assignment was skipped as a CLI environment." },
 		{ "；已登记 ", "; registered " },
 		{ " 个项目。", " projects." }

@@ -370,6 +370,7 @@ internal static class TargetedThreadIndexer
 		threadIndexMetadata.CreatedAtMilliseconds = EpochMilliseconds(dateTime);
 		threadIndexMetadata.UpdatedAtMilliseconds = EpochMilliseconds(dateTime3);
 		threadIndexMetadata.Source = text3;
+		threadIndexMetadata.HistoryMode = CodexHistoryMode.Normalize(Value(dictionary, "history_mode"), path);
 		threadIndexMetadata.ThreadSource = (string.IsNullOrWhiteSpace(text4) ? null : text4);
 		string parentThreadId = Value(dictionary, "parent_thread_id");
 		if (string.IsNullOrWhiteSpace(parentThreadId))

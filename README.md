@@ -40,6 +40,7 @@ After a project is renamed or moved on the same computer, its conversations can 
 - **Projects and conversations together:** use `.codexproject` to package one or more project folders, empty directories, main conversations, and subagent conversations in one file.
 - **Round-trip migration and merge:** move from computer A to B, continue working on B, then back up again and return to A. Merge by original ID identifies the same lineage within the destination project and merges later content.
 - **Independent copies:** Copy as new conversations assigns fresh Thread IDs and separate session files. Deleting one copy does not delete another.
+- **Current Codex history modes:** import preserves and verifies each conversation's `legacy` or `paginated` history mode, preventing a migrated task from appearing in the sidebar but failing when opened.
 
 ### Inspection, trash, and deletion
 

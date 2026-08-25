@@ -3507,7 +3507,7 @@ internal sealed class MainWindowController
 				return;
 			}
 			AppendLog("正在备份 Codex 索引与桌面项目状态，并只登记本次导入的会话……");
-			UpdateImportStage("4 / 4 · 验证项目归属", "正在核对索引路径、会话文件、子代理父子关系和桌面侧栏项目归属。");
+			UpdateImportStage("4 / 4 · 验证项目归属", "正在核对索引路径、历史模式、会话文件、子代理父子关系和桌面侧栏项目归属。");
 			Dictionary<string, string> titleHints = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 			foreach (PackSession session in loadedManifest?.sessions ?? new List<PackSession>())
 			{
@@ -3528,7 +3528,7 @@ internal sealed class MainWindowController
 			}
 			Dictionary<string, string> indexTargets = mapProjectPath ? targetByEffectiveBundle : null;
 			TargetedIndexResult indexResult = await Task.Run(() => indexTargets == null ? TargetedThreadIndexer.IndexImportedSessions(codexHome, effectiveBundlePaths, filesBeforeImport, copiesOnly: false, null, titleHints) : TargetedThreadIndexer.IndexImportedSessionsMapped(codexHome, effectiveBundlePaths, filesBeforeImport, copiesOnly: false, indexTargets, titleHints));
-			AppendLog($"索引路径验证：{indexResult.VisibilityVerifiedCount}/{indexResult.IndexedCount} 条通过；项目路径已使用原生索引格式。");
+			AppendLog($"索引兼容性验证：{indexResult.VisibilityVerifiedCount}/{indexResult.IndexedCount} 条通过；项目路径与会话历史模式均已核对。");
 			if (indexResult.DesktopStateFound)
 			{
 				AppendLog($"桌面项目归属：{indexResult.DesktopAssignmentVerifiedCount}/{indexResult.DesktopAssignmentExpectedCount} 条主对话通过；已登记 {indexResult.DesktopProjectCount} 个项目。");
@@ -3541,7 +3541,7 @@ internal sealed class MainWindowController
 			{
 				AppendLog("未检测到 Codex 桌面项目状态文件；已按 CLI 环境跳过桌面侧栏项目归属。");
 			}
-			UpdateImportStage("4 / 4 · 验证通过", indexResult.DesktopStateFound ? $"{indexResult.VisibilityVerifiedCount}/{indexResult.IndexedCount} 条索引路径、{indexResult.DesktopAssignmentVerifiedCount}/{indexResult.DesktopAssignmentExpectedCount} 条桌面项目归属均已核验。" : $"{indexResult.VisibilityVerifiedCount}/{indexResult.IndexedCount} 条会话索引路径已核验。");
+			UpdateImportStage("4 / 4 · 验证通过", indexResult.DesktopStateFound ? $"{indexResult.VisibilityVerifiedCount}/{indexResult.IndexedCount} 条索引兼容性、{indexResult.DesktopAssignmentVerifiedCount}/{indexResult.DesktopAssignmentExpectedCount} 条桌面项目归属均已核验。" : $"{indexResult.VisibilityVerifiedCount}/{indexResult.IndexedCount} 条会话索引兼容性已核验。");
 			AppendLog($"定点索引完成：新增 {indexResult.InsertedCount} 条，更新 {indexResult.UpdatedCount} 条；全局回填状态未修改。");
 			int removedCctBackups = cctBackupTransaction == null ? 0 : await Task.Run(() => cctBackupTransaction.CommitAndDeleteTemporaryBackups());
 			if (removedCctBackups > 0)
@@ -3560,7 +3560,7 @@ internal sealed class MainWindowController
 			string desktopSuccess = indexResult.DesktopStateFound ? $"\n桌面项目归属：{indexResult.DesktopAssignmentVerifiedCount}/{indexResult.DesktopAssignmentExpectedCount} 条主对话通过" : "\n桌面项目归属：未检测到桌面状态文件，已跳过";
 			string desktopBackup = string.IsNullOrWhiteSpace(indexResult.DesktopStateBackupPath) ? string.Empty : "\n\n桌面项目状态备份：\n" + indexResult.DesktopStateBackupPath;
 			SetStatus(restored.Count == 0 ? "对话导入完成。" : "项目与对话迁移完成。", error: false);
-			AppDialog.Show(window, "迁移完成", "索引与桌面项目归属均已验证", projectSuccess + $"对话已导入 C 盘 Codex 目录，并分别关联到对应项目。\n\n新增索引：{indexResult.InsertedCount} 条\n更新索引：{indexResult.UpdatedCount} 条\n索引路径验证：{indexResult.VisibilityVerifiedCount}/{indexResult.IndexedCount} 条通过" + desktopSuccess + "\n\n现在重新打开 Codex，再打开迁入后的项目目录；对应主对话应直接出现在该项目侧栏中。" + (string.IsNullOrWhiteSpace(indexResult.BackupPath) ? string.Empty : "\n\n索引备份：\n" + indexResult.BackupPath) + desktopBackup, AppDialogTone.Success, "完成");
+			AppDialog.Show(window, "迁移完成", "索引、历史模式与桌面项目归属均已验证", projectSuccess + $"对话已导入 C 盘 Codex 目录，并分别关联到对应项目。\n\n新增索引：{indexResult.InsertedCount} 条\n更新索引：{indexResult.UpdatedCount} 条\n索引兼容性验证：{indexResult.VisibilityVerifiedCount}/{indexResult.IndexedCount} 条通过" + desktopSuccess + "\n\n现在重新打开 Codex，再打开迁入后的项目目录；对应主对话应直接出现在该项目侧栏中。" + (string.IsNullOrWhiteSpace(indexResult.BackupPath) ? string.Empty : "\n\n索引备份：\n" + indexResult.BackupPath) + desktopBackup, AppDialogTone.Success, "完成");
 		}
 		catch (OperationCanceledException ex)
 		{

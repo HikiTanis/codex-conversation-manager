@@ -16,6 +16,8 @@ internal sealed class ThreadIndexMetadata
 
 	public string Source { get; set; }
 
+	public string HistoryMode { get; set; } = CodexHistoryMode.Legacy;
+
 	public string ThreadSource { get; set; }
 
 	public string ParentThreadId { get; set; }

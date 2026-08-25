@@ -17,6 +17,7 @@ Version 3.0.0 expands the original conversation-transfer utility into a local Co
 - Back up multiple project folders, main conversations, and subagent conversations as `.codexproject`.
 - Restore projects to user-selected locations while conversations remain in the normal local Codex data directory.
 - Choose smart merge by original ID or independent copy with fresh Thread IDs and separate files.
+- Preserve and verify each imported conversation's Codex `legacy` or `paginated` history mode, preventing sidebar-visible tasks from failing when opened.
 - View main and subagent conversations separately with consistent selection and deletion controls.
 - Use an app trash for recoverable deletion or permanently purge confirmed-unneeded records to reclaim storage.
 - Route conversation deletion through Codex's official `thread/delete` interface before removing local data; a refusal preserves the original conversation.

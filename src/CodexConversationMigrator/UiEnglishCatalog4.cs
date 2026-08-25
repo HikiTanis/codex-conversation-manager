@@ -147,6 +147,9 @@ internal static class UiEnglishCatalog4
 		{ "读取 Codex threads 失败：", "Reading Codex threads failed: " },
 		{ "无法读取 Codex threads：", "Codex threads could not be read: " },
 		{ "无法只读打开 Codex 索引：", "The Codex index could not be opened read-only: " },
+		{ "会话使用了当前版本尚不支持的历史模式：", "The conversation uses a history mode that this version does not support: " },
+		{ "当前 Codex 索引不包含 history_mode，无法安全导入 paginated 会话。请先更新 Codex 客户端。", "The current Codex index has no history_mode column, so paginated conversations cannot be imported safely. Update Codex first." },
+		{ "Codex 历史模式验证失败：", "Codex history-mode verification failed: " },
 
 		{ "清理侧边栏失效项", "Clean up stale sidebar entries" },
 		{ "清理并定位", "Clean and locate" },

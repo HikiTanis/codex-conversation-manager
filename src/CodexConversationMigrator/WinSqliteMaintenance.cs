@@ -82,6 +82,7 @@ internal static class WinSqliteMaintenance
 		{
 			item.Cwd = TextHelpers.ToCodexIndexPath(item.Cwd);
 			item.RolloutPath = TextHelpers.ToCodexIndexPath(item.RolloutPath);
+			item.HistoryMode = CodexHistoryMode.Normalize(item.HistoryMode, item.Id);
 		}
 
 		string text = FindActiveDatabase(codexHome);
@@ -122,6 +123,10 @@ internal static class WinSqliteMaintenance
 				{
 					throw new InvalidDataException("Codex threads 表缺少必需字段：" + text5);
 				}
+			}
+			if (!hashSet.Contains("history_mode") && list.Any((ThreadIndexMetadata item) => string.Equals(item.HistoryMode, CodexHistoryMode.Paginated, StringComparison.Ordinal)))
+			{
+				throw new InvalidDataException("当前 Codex 索引不包含 history_mode，无法安全导入 paginated 会话。请先更新 Codex 客户端。");
 			}
 			int num2 = 0;
 			int num3 = 0;
@@ -180,6 +185,14 @@ internal static class WinSqliteMaintenance
 					if (!string.Equals(TextHelpers.CanonicalPath(path), TextHelpers.CanonicalPath(item2.Cwd), StringComparison.OrdinalIgnoreCase) || !string.Equals(TextHelpers.CanonicalPath(path2), TextHelpers.CanonicalPath(item2.RolloutPath), StringComparison.OrdinalIgnoreCase))
 					{
 						throw new InvalidDataException("定点索引校验失败：" + item2.Id);
+					}
+					if (hashSet.Contains("history_mode"))
+					{
+						string historyMode = Scalar(db, "select history_mode from threads where id=" + SqlText(item2.Id));
+						if (!string.Equals(historyMode, item2.HistoryMode, StringComparison.Ordinal))
+						{
+							throw new InvalidDataException("Codex 历史模式验证失败：" + item2.Id + "\n文件：" + item2.HistoryMode + "\n索引：" + historyMode);
+						}
 					}
 				}
 				Execute(db, "commit;");
@@ -700,7 +713,7 @@ internal static class WinSqliteMaintenance
 			},
 			{
 				"history_mode",
-				SqlText("legacy")
+				SqlText(item.HistoryMode)
 			},
 			{
 				"thread_source",

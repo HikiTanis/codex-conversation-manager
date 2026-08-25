@@ -495,7 +495,8 @@ internal static class Program
 				{ "originator", "codex_cli_rs" },
 				{ "cli_version", "test" },
 				{ "source", "cli" },
-				{ "model_provider", "openai" }
+				{ "model_provider", "openai" },
+				{ "history_mode", "paginated" }
 			});
 			Dictionary<string, object> obj = dictionary;
 			Dictionary<string, object> dictionary2 = new Dictionary<string, object>();
@@ -540,6 +541,12 @@ internal static class Program
 			Dictionary<string, object> obj3 = dictionary3;
 			string fixtureContents = javaScriptSerializer.Serialize(obj) + Environment.NewLine + javaScriptSerializer.Serialize(obj2) + Environment.NewLine + javaScriptSerializer.Serialize(obj3) + Environment.NewLine;
 			File.WriteAllText(text3, fixtureContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			ThreadIndexMetadata paginatedMetadata = TargetedThreadIndexer.ReadMetadataForTest(text3, "功能测试", "真正的问题");
+			if (!string.Equals(paginatedMetadata.HistoryMode, CodexHistoryMode.Paginated, StringComparison.Ordinal) ||
+				!string.Equals(CodexHistoryMode.Normalize(null, "legacy-default-test"), CodexHistoryMode.Legacy, StringComparison.Ordinal))
+			{
+				throw new InvalidOperationException("Codex history mode metadata test failed");
+			}
 			SessionInfo sessionInfo = new SessionInfo();
 			sessionInfo.ThreadId = testThreadId;
 			sessionInfo.SessionPath = text3;
