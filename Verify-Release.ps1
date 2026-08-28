@@ -117,7 +117,6 @@ if (-not [string]::IsNullOrWhiteSpace($PackagePath)) {
             'SUPPORT.md',
             'LICENSE',
             'THIRD_PARTY_NOTICES.md',
-            'LICENSE-cct.txt',
             'third_party\cct\LICENSE',
             'docs\BACKUP_FORMATS.md',
             'docs\RELEASING.md',

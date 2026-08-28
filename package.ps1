@@ -97,8 +97,6 @@ try {
     Copy-Item -LiteralPath (Join-Path $repoRoot 'SUPPORT.md') -Destination (Join-Path $stage 'SUPPORT.md')
     Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination (Join-Path $stage 'LICENSE')
     Copy-Item -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md') -Destination (Join-Path $stage 'THIRD_PARTY_NOTICES.md')
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'third_party\cct\LICENSE') -Destination (Join-Path $stage 'LICENSE-cct.txt')
-
     $stageDocs = Join-Path $stage 'docs'
     New-Item -ItemType Directory -Path $stageDocs -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $repoRoot 'docs\BACKUP_FORMATS.md') -Destination (Join-Path $stageDocs 'BACKUP_FORMATS.md')
