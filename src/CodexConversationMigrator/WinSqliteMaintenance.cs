@@ -158,7 +158,7 @@ internal static class WinSqliteMaintenance
 					}
 					if (!string.IsNullOrWhiteSpace(item.ParentThreadId) && TableExists(db, "thread_spawn_edges"))
 					{
-						Execute(db, "insert into thread_spawn_edges(parent_thread_id,child_thread_id,status) values(" + SqlText(item.ParentThreadId) + "," + SqlText(item.Id) + ",'open') on conflict(child_thread_id) do nothing;");
+						Execute(db, "insert into thread_spawn_edges(parent_thread_id,child_thread_id,status) values(" + SqlText(item.ParentThreadId) + "," + SqlText(item.Id) + ",'open') on conflict(child_thread_id) do update set parent_thread_id=excluded.parent_thread_id,status=excluded.status;");
 					}
 				}
 				string b = ReadBackfillSnapshot(db);
@@ -796,6 +796,7 @@ internal static class WinSqliteMaintenance
 	{
 		List<string> list = new List<string>();
 		AddAssignment(list, columns, "rollout_path", SqlText(item.RolloutPath));
+		AddAssignment(list, columns, "history_mode", SqlText(item.HistoryMode));
 		AddAssignment(list, columns, "updated_at", SqlNumber(item.UpdatedAtSeconds));
 		AddAssignment(list, columns, "updated_at_ms", SqlNumber(item.UpdatedAtMilliseconds));
 		AddAssignment(list, columns, "source", SqlText(item.Source));
@@ -947,6 +948,75 @@ internal static class WinSqliteMaintenance
 			{
 				sqlite3_close_v2(db);
 			}
+		}
+	}
+	public static void RestoreConsistentBackup(string databasePath, string backupPath)
+	{
+		if (string.IsNullOrWhiteSpace(databasePath) || string.IsNullOrWhiteSpace(backupPath) || !File.Exists(backupPath))
+		{
+			throw new FileNotFoundException("找不到可用于恢复 Codex 索引的导入前备份。", backupPath);
+		}
+		IntPtr source = IntPtr.Zero;
+		IntPtr destination = IntPtr.Zero;
+		IntPtr backup = IntPtr.Zero;
+		try
+		{
+			if (sqlite3_open_v2(Utf8(backupPath), out source, 1, IntPtr.Zero) != 0)
+			{
+				throw new InvalidDataException("无法打开 Codex 索引备份：" + Error(source));
+			}
+			if (sqlite3_open_v2(Utf8(databasePath), out destination, 2, IntPtr.Zero) != 0)
+			{
+				throw new InvalidDataException("无法打开需要恢复的 Codex 索引：" + Error(destination));
+			}
+			sqlite3_busy_timeout(destination, 8000);
+			backup = sqlite3_backup_init(destination, Utf8("main"), source, Utf8("main"));
+			if (backup == IntPtr.Zero)
+			{
+				throw new InvalidDataException("无法开始恢复 Codex 索引：" + Error(destination));
+			}
+			int code = 5;
+			for (int i = 0; i < 40; Thread.Sleep(100), i++)
+			{
+				code = sqlite3_backup_step(backup, -1);
+				if (code == 101)
+				{
+					break;
+				}
+				if (code != 5 && code != 6)
+				{
+					throw new InvalidDataException("恢复 Codex 索引失败，SQLite 返回 " + code + "。");
+				}
+			}
+			if (code != 101)
+			{
+				throw new IOException("Codex 索引正忙，无法从导入前备份恢复。");
+			}
+			int finishCode = sqlite3_backup_finish(backup);
+			backup = IntPtr.Zero;
+			if (finishCode != 0)
+			{
+				throw new InvalidDataException("完成 Codex 索引恢复失败，SQLite 返回 " + finishCode + "。");
+			}
+		}
+		finally
+		{
+			if (backup != IntPtr.Zero)
+			{
+				sqlite3_backup_finish(backup);
+			}
+			if (destination != IntPtr.Zero)
+			{
+				sqlite3_close_v2(destination);
+			}
+			if (source != IntPtr.Zero)
+			{
+				sqlite3_close_v2(source);
+			}
+		}
+		if (!string.Equals(IntegrityCheck(databasePath), "ok", StringComparison.OrdinalIgnoreCase))
+		{
+			throw new InvalidDataException("恢复后的 Codex 索引未通过完整性检查。");
 		}
 	}
 

@@ -1,6 +1,15 @@
 # Codex Conversation Migrator v3.0.0
 
-Version 3.0.0 expands the original conversation-transfer utility into a local Codex conversation and project manager. It combines inspection, storage management, deletion, project-path reassociation, backup, restore, and cross-computer migration in one Windows application.
+Version 3.0.0 is the first public release of the expanded local Codex conversation and project manager. It combines inspection, storage management, deletion, project-path reassociation, backup, restore, and cross-computer migration in one portable Windows application.
+
+## 简体中文摘要
+
+- 统一管理 Codex 项目、主对话和子代理对话，可查看时间、大小、Thread ID 与实际路径。
+- 项目改名或移动后，可以重新关联原对话；也可只迁移对话，或把多个项目与全部关联对话打包迁移。
+- 支持按原始编号合并与生成全新编号的独立复制，适合跨电脑往返迁移。
+- 支持软件回收站、恢复、永久删除、项目目录处理、孤立子代理和旧侧边栏残留修复。
+- 导入会保留并验证 Codex 的 `legacy` / `paginated` 历史模式，并在写入索引前拒绝缺少连续 `ordinal` 或 `turn_context` 的分页记录。
+- 支持简体中文与英文即时切换，并统一了主要窗口、弹窗、标题栏和任务栏图标。
 
 ## Problems addressed
 
@@ -13,27 +22,48 @@ Version 3.0.0 expands the original conversation-transfer utility into a local Co
 
 ## Highlights
 
-- Back up selected conversations across projects as `.codexchat`.
+- Back up selected main conversations across projects as `.codexchat`.
 - Back up multiple project folders, main conversations, and subagent conversations as `.codexproject`.
 - Restore projects to user-selected locations while conversations remain in the normal local Codex data directory.
 - Choose smart merge by original ID or independent copy with fresh Thread IDs and separate files.
-- Preserve and verify each imported conversation's Codex `legacy` or `paginated` history mode, preventing sidebar-visible tasks from failing when opened.
+- Preserve and verify each imported conversation's Codex `legacy` or `paginated` history mode; reject structurally incomplete paginated records before indexing.
+- Skip invalid same-source/destination cwd mappings instead of failing an otherwise valid import.
 - View main and subagent conversations separately with consistent selection and deletion controls.
 - Use an app trash for recoverable deletion or permanently purge confirmed-unneeded records to reclaim storage.
-- Route conversation deletion through Codex's official `thread/delete` interface before removing local data; a refusal preserves the original conversation.
-- Keep the Codex desktop sidebar in sync after confirmed deletion, and repair older deleted tasks that still appear there. Cleanup requires Codex to be fully closed and does not remove sign-in data, valid tasks, or project files.
-- Resolve parent-child relationships from rollout metadata and the Codex thread index before deletion. Because parent deletion cascades to spawned descendants, recoverable deletion stages each affected conversation separately in the app trash and permanent deletion discloses the full impact count.
-- Keep rollout files, the SQLite thread index, and Codex desktop thread state synchronized during deletion and restoration.
-- Detect both index orphans and legacy partial deletions. Older candidates are cross-checked against Codex `rollout_not_found` logs and the latest pre-deletion index backup before user review.
-- Keep subagent-only projects visible as **Orphaned subagents**. When a stale parent cannot be removed safely, show the descendant's friendly role, exact Thread ID, parent ID, project path, and JSONL path, then automatically select it for recoverable deletion.
-- Use redesigned dialogs, consistent controls, corrected title-bar buttons, and a proper taskbar icon.
-- Switch between Simplified Chinese and English without restarting.
+- Route supported conversation deletion through Codex's official `thread/delete` interface before local cleanup; a refusal preserves the original conversation.
+- Resolve parent-child relationships before deletion, stage separately recoverable descendant copies, and disclose the complete permanent-deletion impact.
+- Repair exact, evidence-backed older sidebar remnants and keep orphaned subagents visible for review.
+- Keep rollout files, the SQLite thread index, Codex history mode, desktop project state, and sidebar state synchronized during import, deletion, and restoration.
+- Use redesigned dialogs, consistent controls, corrected title-bar buttons, a proper taskbar icon, and immediate Simplified Chinese/English switching.
 - Import legacy `.codexpack` and `.codexbundle` files while creating new backups with clearer extensions.
 
-## Upgrade note
+## Download and verification
 
-Extract v3.0.0 into a new folder rather than mixing it with an older package. Formal `.codexchat` and `.codexproject` backups are user-managed files and are not deleted when their source conversations are removed from the application.
+Release assets:
 
-Exit Codex completely before deleting or restoring conversations, because a running desktop process can overwrite local sidebar state. Conversation deletion and legacy-sidebar repair require an independently callable Codex CLI (`codex.exe`); run `codex --version` to verify it is available. If an older build already left a broken sidebar item, open it once so Codex records the failure, exit Codex, click Refresh in the manager, review the detected title and Thread ID, and confirm cleanup. If the conversation is already gone but its sidebar item remains, Refresh completes the matching cleanup before Codex is reopened.
+- `CodexConversationMigrator-Windows-v3.0.0.zip`
+- `SHA256SUMS.txt`
 
-Moving a conversation to the app trash preserves a copy inside the Codex data directory. To reclaim that disk space, permanently purge the record from the app trash after confirming it is no longer needed.
+The package is portable and requires 64-bit Windows 10/11 plus the .NET Framework 4.8 runtime. The verified `cct.exe` dependency is included. Conversation deletion and legacy-sidebar repair additionally require an independently callable Codex CLI; run `codex --version` before using those operations.
+
+Verify the ZIP before extracting it:
+
+```powershell
+$zip = '.\CodexConversationMigrator-Windows-v3.0.0.zip'
+$expected = ((Get-Content .\SHA256SUMS.txt -Raw).Trim() -split '\s+')[0]
+$actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
+if ($actual -ne $expected) { throw 'SHA-256 mismatch. Do not run this package.' }
+$actual
+```
+
+The application EXE and bundled `cct.exe` are currently not Authenticode-signed, so Windows SmartScreen may show an unknown-publisher warning. Run the package only after verifying its hash and confirming that it came from the intended GitHub Release.
+
+## Upgrade and safety notes
+
+- Extract v3.0.0 into a new folder rather than mixing it with an older package.
+- Exit Codex completely before formal import, deletion, or restoration.
+- Formal `.codexchat` and `.codexproject` files are user-managed and are not deleted when their source conversations are removed.
+- Moving a conversation to app trash keeps a recoverable copy inside the Codex data directory; permanently purge it to reclaim that storage.
+- Project packages preserve ordinary files, empty directories, and last-write timestamps, but skip directory junctions and symbolic links and do not transfer NTFS permissions or alternate data streams.
+- Paginated full-history support remains dependent on the destination Codex version. Keep the source package until imported conversations have been opened and verified. The current [Codex app-server documentation](https://developers.openai.com/codex/app-server) marks full-history reading and resumption for paginated records as not yet supported.
+- Backup packages and app-trash records are not encrypted and may contain complete conversation, project, path, environment, and secret data.

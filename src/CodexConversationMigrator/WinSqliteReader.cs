@@ -54,7 +54,8 @@ internal static class WinSqliteReader
 				throw new InvalidDataException("无法只读打开 Codex 索引：" + Error(db));
 			}
 			bool hasSpawnEdges = TableExists(db, "thread_spawn_edges");
-			string value = "select id,cwd,rollout_path,title,source,coalesce(thread_source,''),archived,coalesce(updated_at_ms,updated_at*1000)," + (hasSpawnEdges ? "coalesce((select parent_thread_id from thread_spawn_edges where child_thread_id=threads.id limit 1),'')" : "''") + " from threads";
+			bool hasHistoryMode = ColumnExists(db, "threads", "history_mode");
+			string value = "select id,cwd,rollout_path,title,source,coalesce(thread_source,''),archived,coalesce(updated_at_ms,updated_at*1000)," + (hasSpawnEdges ? "coalesce((select parent_thread_id from thread_spawn_edges where child_thread_id=threads.id limit 1),'')" : "''") + "," + (hasHistoryMode ? "coalesce(history_mode,'legacy')" : "'legacy'") + " from threads";
 			if (sqlite3_prepare_v2(db, Utf8(value), -1, out statement, IntPtr.Zero) != 0)
 			{
 				throw new InvalidDataException("无法读取 Codex threads：" + Error(db));
@@ -82,7 +83,8 @@ internal static class WinSqliteReader
 					ThreadSource = ColumnText(statement, 5),
 					Archived = (sqlite3_column_int64(statement, 6) != 0),
 					UpdatedAtMilliseconds = sqlite3_column_int64(statement, 7),
-					ParentThreadId = ColumnText(statement, 8)
+					ParentThreadId = ColumnText(statement, 8),
+					HistoryMode = ColumnText(statement, 9)
 				});
 			}
 		}
@@ -110,6 +112,33 @@ internal static class WinSqliteReader
 				return false;
 			}
 			return sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int64(statement, 0) > 0L;
+		}
+		finally
+		{
+			if (statement != IntPtr.Zero)
+			{
+				sqlite3_finalize(statement);
+			}
+		}
+	}
+	private static bool ColumnExists(IntPtr db, string tableName, string columnName)
+	{
+		IntPtr statement = IntPtr.Zero;
+		try
+		{
+			string sql = "pragma table_info([" + (tableName ?? string.Empty).Replace("]", "]]") + "])";
+			if (sqlite3_prepare_v2(db, Utf8(sql), -1, out statement, IntPtr.Zero) != 0)
+			{
+				return false;
+			}
+			while (sqlite3_step(statement) == SQLITE_ROW)
+			{
+				if (string.Equals(ColumnText(statement, 1), columnName, StringComparison.OrdinalIgnoreCase))
+				{
+					return true;
+				}
+			}
+			return false;
 		}
 		finally
 		{

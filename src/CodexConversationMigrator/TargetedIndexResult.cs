@@ -16,6 +16,8 @@ internal sealed class TargetedIndexResult
 
 	public int VisibilityVerifiedCount { get; set; }
 
+	public int PaginatedCount { get; set; }
+
 	public bool DesktopStateFound { get; set; }
 
 	public int DesktopAssignmentExpectedCount { get; set; }

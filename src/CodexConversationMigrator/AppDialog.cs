@@ -15,6 +15,29 @@ internal enum AppDialogTone
 
 internal static class AppDialog
 {
+	private static Action<Window> WindowCaptureForTest;
+
+	internal static Window CreatePaginatedCompletionPreviewForTest()
+	{
+		Window preview = null;
+		WindowCaptureForTest = window => preview = window;
+		try
+		{
+			string warning = MainWindowController.BuildPaginatedImportWarning(2);
+			Show(null,
+				UiLanguage.IsEnglish ? "Import completed · verification required" : "迁移完成 · 需要验证",
+				UiLanguage.IsEnglish ? "Indexing passed; verify paginated history in Codex" : "索引已通过，请验证分页历史",
+				warning + "\n\n" + UiLanguage.T("现在重新打开 Codex，再打开迁入后的项目目录并实际打开对应对话。"),
+				AppDialogTone.Warning,
+				"完成");
+		}
+		finally
+		{
+			WindowCaptureForTest = null;
+		}
+		return preview ?? throw new InvalidOperationException("Unable to create paginated completion preview.");
+	}
+
 	public static void Show(Window owner, string title, string heading, string message, AppDialogTone tone, string closeText = "知道了")
 	{
 		ShowCore(owner, title, heading, message, tone, closeText, null);
@@ -159,6 +182,11 @@ internal static class AppDialog
 		};
 		buttons.Children.Add(primary);
 
+		if (WindowCaptureForTest != null)
+		{
+			WindowCaptureForTest(dialog);
+			return result;
+		}
 		dialog.ShowDialog();
 		return result;
 	}

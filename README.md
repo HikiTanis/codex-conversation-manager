@@ -10,6 +10,16 @@ It does more than copy conversation files. The application preserves conversatio
 
 > This is an unofficial community project. It is not affiliated with or endorsed by OpenAI. Codex's local storage formats may change; inspect a backup before importing it and keep an independent copy of important data.
 
+## Choose the right workflow
+
+| Goal | Use | Import identity mode |
+| --- | --- | --- |
+| Rename or move a project on the same computer | Create a `.codexchat` backup, then map it to the new folder | **Merge by original ID** |
+| Copy the project folder yourself to another computer | Move the folder and a `.codexchat` backup separately | Merge to continue the same lineage, or copy for an independent duplicate |
+| Move project files and conversations together | Create one `.codexproject` containing one or more projects | Merge or independent copy |
+| Keep a completely separate conversation copy | Use either formal backup type | **Copy as new conversations** |
+| Review or reclaim local storage | Use the Main conversations, Subagents, and app-trash views | Move to app trash first, or permanently delete after review |
+
 ## Problems it addresses
 
 | Scenario | Common problem | How the application helps |
@@ -37,10 +47,10 @@ After a project is renamed or moved on the same computer, its conversations can 
 ### Conversation-only or complete project migration
 
 - **Conversations only:** copy the project yourself, then use `.codexchat` to import selected main conversations and associate them with the destination folder.
-- **Projects and conversations together:** use `.codexproject` to package one or more project folders, empty directories, main conversations, and subagent conversations in one file.
+- **Projects and conversations together:** use `.codexproject` to package one or more project folders, ordinary files, empty directories, main conversations, and subagent conversations in one file. Directory junctions, symbolic links, NTFS permissions, and alternate data streams are not transferred.
 - **Round-trip migration and merge:** move from computer A to B, continue working on B, then back up again and return to A. Merge by original ID identifies the same lineage within the destination project and merges later content.
 - **Independent copies:** Copy as new conversations assigns fresh Thread IDs and separate session files. Deleting one copy does not delete another.
-- **Current Codex history modes:** import preserves and verifies each conversation's `legacy` or `paginated` history mode, preventing a migrated task from appearing in the sidebar but failing when opened.
+- **Codex history modes:** import preserves and verifies each conversation's `legacy` or `paginated` mode; paginated records are also checked for continuous `ordinal` values and `turn_context`. Full paginated-history support still depends on the destination Codex version, so keep the source backup and open imported tasks to verify them. The current [Codex app-server documentation](https://developers.openai.com/codex/app-server) marks paginated history as experimental and says full-history reading and resumption are not yet supported.
 
 ### Inspection, trash, and deletion
 
@@ -57,13 +67,13 @@ After a project is renamed or moved on the same computer, its conversations can 
 
 > **Freeing space on drive C:** the app trash is stored inside the Codex data directory. Moving records there protects against accidental deletion but does not materially reclaim space on that drive. Permanently purge confirmed-unneeded records from the app trash to release their storage.
 
-> **Before deletion or restoration:** exit Codex completely so the running desktop app cannot overwrite the updated index.
+> **Before a formal import, deletion, or restoration:** exit Codex completely so the running desktop app cannot overwrite updated session, index, or sidebar state.
 
 ## Download and run (end users)
 
-The release ZIP is portable: there is no installer, and end users do not need the .NET SDK, targeting pack, or any repository PowerShell script. A 64-bit Windows 10/11 system with the .NET Framework 4.8 runtime is required.
+The release ZIP is portable: there is no installer, and end users do not need the .NET SDK, targeting pack, or repository PowerShell scripts. A 64-bit Windows 10/11 system with the [.NET Framework 4.8 runtime](https://dotnet.microsoft.com/en-us/download/dotnet-framework/net48) is required.
 
-Inspection, backup, and import work directly from the release package. **Conversation deletion and legacy-sidebar repair additionally require an independently callable Codex CLI (`codex.exe`)**. The application checks common npm installation paths, `PATH`, and its own directory. Run `codex --version` in PowerShell first. If the command is unavailable, follow the [official Codex CLI documentation](https://developers.openai.com/codex/cli), or install the npm package:
+Inspection, backup, and import work directly from the release package because the verified `cct.exe` dependency is included. **Conversation deletion and legacy-sidebar repair additionally require an independently callable Codex CLI (`codex.exe`)**. The application checks common npm installation paths, `PATH`, its own directory, and versioned Codex/VS Code extension runtimes, then prefers the newer discovered version. Run `codex --version` in PowerShell first. If unavailable, follow the [official Codex CLI documentation](https://developers.openai.com/codex/cli), or install the npm package:
 
 ```powershell
 npm install -g @openai/codex
@@ -73,21 +83,33 @@ codex --version
 If the CLI cannot be found or official deletion is rejected, the application stops and preserves the original conversation.
 
 1. Download `CodexConversationMigrator-Windows-v3.0.0.zip` and `SHA256SUMS.txt` from Releases.
-2. Extract the entire ZIP into a new folder. Do not run the application from inside the ZIP, and keep the EXE, XAML, and `cct.exe` together.
-3. Double-click `Start.cmd`; `CodexConversationMigrator.exe` can also be started directly.
-4. When upgrading, extract the new version into a separate folder instead of mixing it with files from an older release.
+2. Verify the ZIP before extracting it:
+
+   ```powershell
+   $zip = '.\CodexConversationMigrator-Windows-v3.0.0.zip'
+   $expected = ((Get-Content .\SHA256SUMS.txt -Raw).Trim() -split '\s+')[0]
+   $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
+   if ($actual -ne $expected) { throw 'SHA-256 mismatch. Do not run this package.' }
+   $actual
+   ```
+
+3. Extract the entire ZIP into a new folder. Do not run the application from inside the ZIP, and keep the EXE, XAML, and `cct.exe` together.
+4. Double-click `Start.cmd`; `CodexConversationMigrator.exe` can also be started directly.
+5. When upgrading, extract the new version into a separate folder instead of mixing it with files from an older release.
+
+The application EXE and bundled `cct.exe` are currently not Authenticode-signed, so Windows SmartScreen may show an unknown-publisher warning. Verify the downloaded ZIP against `SHA256SUMS.txt` and run it only if you trust the release source. A matching hash detects a changed download; it does not replace publisher identity verification.
 
 ## Basic usage
 
 ### Create a backup
 
-1. Open **Back up conversations** and choose **Projects + conversations** or **Conversations only**.
+1. Open **Manage and Back Up** and choose **Projects + conversations** or **Conversations only**.
 2. Select the projects or main conversations to include. Selections can span multiple projects.
 3. Choose the destination folder and create the `.codexproject` or `.codexchat` package.
 
 ### Restore or migrate
 
-1. Open **Import backup** and select the backup package.
+1. Open **Import and Restore** and select the backup package.
 2. For `.codexchat`, select each project's actual folder. For `.codexproject`, select where project folders should be restored.
 3. Use **Merge by original ID** to continue the same lineage, or **Copy as new conversations** for independent files and Thread IDs.
 4. Run **Inspect first (no writes)**. After it passes, exit Codex completely and start the import.
@@ -98,7 +120,7 @@ If the CLI cannot be found or official deletion is rejected, the application sto
 1. Select a project, then switch between **Main conversations** and **Subagent conversations**.
 2. Review the latest update time, size, Thread ID, path, or read-only conversation content.
 3. Select individual records or use Select all, then choose **Delete selected**. If a main conversation has spawned descendants, the confirmation shows the additional impact count.
-4. Exit Codex before confirming deletion or restoration. If an older version left a broken sidebar item, open it once in Codex so the failure is recorded, exit Codex completely, then open this application and click **Refresh**. Review the title and Thread ID before confirming repair. If the conversation is already gone but its sidebar item remains, Refresh completes the matching sidebar cleanup before reporting that Codex can be reopened.
+4. Exit Codex before confirming deletion or restoration. If an older version left a broken sidebar item, open it once in Codex so the failure is recorded, exit Codex completely, then open this application and click **Refresh / Repair**. Review the title and Thread ID before confirming repair. If the conversation is already gone but its sidebar item remains, Refresh completes the matching sidebar cleanup before reporting that Codex can be reopened.
 5. Use the app trash when recovery may be needed; permanently purge confirmed-unneeded records when storage must be reclaimed.
 
 ## Typical workflows
@@ -145,23 +167,32 @@ Requirements:
 - .NET Framework 4.8 targeting pack
 - PowerShell 5.1 or newer
 
-From the repository root, one command downloads any missing pinned component, builds the application, runs the tests, and creates the release ZIP:
+`VERSION` is the authoritative release version. From the repository root, one command validates that version, downloads any missing pinned component, builds the application, runs the functional and render tests, removes older local release ZIPs, and creates the current package:
+
+```powershell
+.\package.ps1
+```
+
+Passing `-Version` is optional and acts as an assertion; it must match `VERSION`:
 
 ```powershell
 .\package.ps1 -Version 3.0.0
 ```
 
-`package.ps1` calls the build and test scripts automatically. If `cct.exe` is missing, the build invokes `Get-Cct.ps1`, downloads the pinned upstream `cct` v1.2.0 release, and verifies both the archive and executable with SHA-256. The finished ZIP is written to `release/` together with `SHA256SUMS.txt`. The desktop application itself does not download build dependencies.
+`package.ps1` invokes the build, test, and release-verification scripts automatically. If `cct.exe` is missing, the build invokes `Get-Cct.ps1`, downloads pinned upstream `cct` v1.2.0, and verifies both the archive and executable with SHA-256. The deterministic ZIP and `SHA256SUMS.txt` are written to `release/`. The desktop application itself does not download build dependencies.
+
+See [docs/RELEASING.md](docs/RELEASING.md) for the maintainer checklist.
 
 ## Privacy and safety
 
-- The application runs locally and has no telemetry or cloud-sync feature.
-- Backup packages can contain prompts, source code, command output, local paths, and secrets. Treat them as sensitive files.
+- The application runs locally and has no telemetry, cloud-sync, account, or automatic-update feature.
+- Formal backups and app-trash entries are not encrypted. They can contain prompts, source code, command output, local paths, environment details, and secrets; treat them as sensitive files.
+- Project packages contain ordinary files and empty directories but skip directory junctions and symbolic links. NTFS permissions and alternate data streams are not transferred.
 - Permanent deletion cannot be undone by this application. Confirm conversation and project paths before proceeding.
-- Import updates Codex session files, the local task index, and desktop project association data. The application creates safety backups and validates writes, but important data should still have an independent backup.
-- Never attach a real backup package, session JSONL, or Codex database to a public issue.
+- Import updates Codex session files, the local task index, and desktop project-association data. The application validates writes, but important data should still have an independent backup.
+- Never attach a real backup package, session JSONL, Codex database, or unredacted screenshot to a public issue.
 
-See [PRIVACY.md](PRIVACY.md), [SECURITY.md](SECURITY.md), and [docs/BACKUP_FORMATS.md](docs/BACKUP_FORMATS.md).
+See [PRIVACY.md](PRIVACY.md), [SECURITY.md](SECURITY.md), [backup-format details](docs/BACKUP_FORMATS.md), [v3.0.0 release notes](docs/RELEASE_NOTES_v3.0.0.md), [CHANGELOG.md](CHANGELOG.md), and [SUPPORT.md](SUPPORT.md).
 
 ## Third-party component and license
 

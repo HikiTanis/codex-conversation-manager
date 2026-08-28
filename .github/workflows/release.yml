@@ -11,7 +11,7 @@ permissions:
 jobs:
   release:
     runs-on: windows-2022
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Check out source
@@ -22,22 +22,37 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Validate release tag and version
+        id: version
+        shell: powershell
+        run: |
+          $version = [IO.File]::ReadAllText('VERSION').Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid VERSION: $version" }
+          if ($env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Tag $env:GITHUB_REF_NAME does not match VERSION v$version."
+          }
+          $releaseNotes = "docs\RELEASE_NOTES_v$version.md"
+          if (-not (Test-Path -LiteralPath $releaseNotes)) {
+            throw "Missing release notes: $releaseNotes"
+          }
+          [IO.File]::AppendAllText($env:GITHUB_OUTPUT, "version=$version$([Environment]::NewLine)", [Text.UTF8Encoding]::new($false))
+          .\Verify-Release.ps1 -Version $version
+
       - name: Fetch verified cct dependency
         shell: powershell
         run: .\Get-Cct.ps1
 
       - name: Build, test, and package
         shell: powershell
-        run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          .\package.ps1 -Version $version
+        run: .\package.ps1 -Version '${{ steps.version.outputs.version }}'
 
       - name: Create GitHub release
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $zip = @(Get-ChildItem release -Filter '*.zip' -File)
-          if ($zip.Count -ne 1) { throw "Expected one release ZIP, found $($zip.Count)." }
+          $version = '${{ steps.version.outputs.version }}'
+          $zip = Resolve-Path "release\CodexConversationMigrator-Windows-v$version.zip"
           $sums = Resolve-Path 'release\SHA256SUMS.txt'
-          gh release create $env:GITHUB_REF_NAME $zip[0].FullName $sums.Path --verify-tag --generate-notes --title "Codex Conversation Migrator $env:GITHUB_REF_NAME"
+          $notes = Resolve-Path "docs\RELEASE_NOTES_v$version.md"
+          gh release create $env:GITHUB_REF_NAME $zip.Path $sums.Path --verify-tag --notes-file $notes.Path --title "Codex Conversation Migrator $env:GITHUB_REF_NAME"

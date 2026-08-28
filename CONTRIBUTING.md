@@ -8,10 +8,10 @@ Contributions are welcome. Keep changes focused, preserve the local-first behavi
 2. From the repository root, run the complete build, test, and packaging workflow:
 
    ```powershell
-   .\package.ps1 -Version 3.0.0
+   .\package.ps1
    ```
 
-   This command fetches and verifies the pinned `cct` dependency when missing, builds the application, runs all automated tests, and creates the release ZIP and checksum under `release/`.
+   This command reads the authoritative `VERSION` file, fetches and verifies the pinned `cct` dependency when missing, builds the application, runs all automated tests, and creates the release ZIP and checksum under `release/`.
 3. Describe behavior changes, safety implications, and manual checks in the pull request.
 
 ## Rules for fixtures and bug reports

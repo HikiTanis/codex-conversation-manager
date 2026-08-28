@@ -187,7 +187,24 @@ internal static class TargetedThreadIndexer
 	{
 		List<ThreadIndexMetadata> list = (metadata ?? Enumerable.Empty<ThreadIndexMetadata>()).ToList();
 		TargetedIndexResult result = WinSqliteMaintenance.UpsertImportedThreads(codexHome, list);
-		DesktopProjectRegistrationResult desktop = CodexDesktopProjectRegistry.RegisterImportedThreads(codexHome, list);
+		result.PaginatedCount = list.Count(item => string.Equals(item.HistoryMode, CodexHistoryMode.Paginated, StringComparison.Ordinal));
+		DesktopProjectRegistrationResult desktop;
+		try
+		{
+			desktop = CodexDesktopProjectRegistry.RegisterImportedThreads(codexHome, list);
+		}
+		catch (Exception ex)
+		{
+			try
+			{
+				WinSqliteMaintenance.RestoreConsistentBackup(result.DatabasePath, result.BackupPath);
+			}
+			catch (Exception restoreError)
+			{
+				throw new AggregateException("桌面项目归属登记失败，而且 Codex 索引无法自动恢复。请保留索引备份并停止重试。", ex, restoreError);
+			}
+			throw new InvalidOperationException("桌面项目归属登记失败，Codex 索引已恢复到导入前状态。", ex);
+		}
 		result.DesktopStateFound = desktop.StateFileFound;
 		result.DesktopAssignmentExpectedCount = desktop.ExpectedThreadCount;
 		result.DesktopAssignmentVerifiedCount = desktop.VerifiedThreadCount;
@@ -371,6 +388,7 @@ internal static class TargetedThreadIndexer
 		threadIndexMetadata.UpdatedAtMilliseconds = EpochMilliseconds(dateTime3);
 		threadIndexMetadata.Source = text3;
 		threadIndexMetadata.HistoryMode = CodexHistoryMode.Normalize(Value(dictionary, "history_mode"), path);
+		CodexHistoryMode.ValidateSessionFile(path, threadIndexMetadata.HistoryMode);
 		threadIndexMetadata.ThreadSource = (string.IsNullOrWhiteSpace(text4) ? null : text4);
 		string parentThreadId = Value(dictionary, "parent_thread_id");
 		if (string.IsNullOrWhiteSpace(parentThreadId))

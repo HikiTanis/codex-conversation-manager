@@ -116,6 +116,8 @@ internal sealed class MainWindowController
 	private readonly Border importTabIndicator;
 
 	private readonly System.Windows.Controls.Button languageButton;
+	private readonly System.Windows.Controls.Button closeButton;
+
 
 	private readonly System.Windows.Controls.Button backupTabButton;
 
@@ -283,6 +285,7 @@ internal sealed class MainWindowController
 		}
 		string localizedXaml = UiLanguage.LoadXaml(text);
 		window = (Window)XamlReader.Parse(localizedXaml);
+		window.MinWidth = UiLanguage.IsEnglish ? 1040.0 : 900.0;
 		window.Tag = this;
 		cctPathBox = Find<System.Windows.Controls.TextBox>("CctPathBox");
 		backupFolderBox = Find<System.Windows.Controls.TextBox>("BackupFolderBox");
@@ -325,6 +328,7 @@ internal sealed class MainWindowController
 		browseBackupFolderButton = Find<System.Windows.Controls.Button>("BrowseBackupFolderButton");
 		selectAllProjectsButton = Find<System.Windows.Controls.Button>("SelectAllProjectsButton");
 		languageButton = Find<System.Windows.Controls.Button>("LanguageButton");
+		closeButton = Find<System.Windows.Controls.Button>("CloseButton");
 		clearProjectsButton = Find<System.Windows.Controls.Button>("ClearProjectsButton");
 		toggleSessionSelectionButton = Find<System.Windows.Controls.Button>("ToggleSessionSelectionButton");
 		deleteSelectedSessionsButton = Find<System.Windows.Controls.Button>("DeleteSelectedSessionsButton");
@@ -426,6 +430,62 @@ internal sealed class MainWindowController
 		return showSubagentSessions && TestCurrentSessionSelectionToggleForTest();
 	}
 
+	public bool TestFilteredSelectionStateForTest()
+	{
+		List<SessionInfo> sessions = CurrentSessionTypeItems();
+		if (sessions.Count == 0)
+		{
+			return false;
+		}
+		foreach (SessionInfo session in sessions)
+		{
+			session.IsSelected = false;
+		}
+		sessions[0].IsSelected = true;
+		UpdateSessionSelectionControls();
+		string originalSearch = searchBox.Text;
+		searchBox.Text = "__no_matching_conversation_for_selection_test__";
+		bool hiddenState = CurrentVisibleSessionTypeItems().Count == 0 &&
+			!deleteSelectedSessionsButton.IsEnabled &&
+			!toggleSessionSelectionButton.IsEnabled &&
+			(Convert.ToString(deleteSelectedSessionsButton.Content) ?? string.Empty).IndexOf("(1)", StringComparison.Ordinal) < 0;
+		searchBox.Text = originalSearch;
+		bool restoredState = CurrentVisibleSessionTypeItems().Contains(sessions[0]) &&
+			deleteSelectedSessionsButton.IsEnabled &&
+			(Convert.ToString(deleteSelectedSessionsButton.Content) ?? string.Empty).IndexOf("1", StringComparison.Ordinal) >= 0;
+		return hiddenState && restoredState;
+	}
+
+	public bool TestSessionTypeSwitchSelectionStateForTest()
+	{
+		if (selectedProject == null || selectedProject.MainCount == 0 || selectedProject.InternalCount == 0)
+		{
+			return false;
+		}
+		foreach (SessionInfo session in selectedProject.Sessions)
+		{
+			session.IsSelected = false;
+		}
+		mainSessionsTabRadio.IsChecked = true;
+		SessionInfo main = CurrentVisibleSessionTypeItems().FirstOrDefault();
+		if (main == null)
+		{
+			return false;
+		}
+		main.IsSelected = true;
+		UpdateSessionSelectionControls();
+		subagentSessionsTabRadio.IsChecked = true;
+		bool subagentState = showSubagentSessions &&
+			CurrentVisibleSessionTypeItems().All(session => session.IsSubagent) &&
+			!deleteSelectedSessionsButton.IsEnabled;
+		mainSessionsTabRadio.IsChecked = true;
+		bool mainState = !showSubagentSessions &&
+			CurrentVisibleSessionTypeItems().Contains(main) &&
+			deleteSelectedSessionsButton.IsEnabled &&
+			(Convert.ToString(deleteSelectedSessionsButton.Content) ?? string.Empty).IndexOf("1", StringComparison.Ordinal) >= 0;
+		return subagentState && mainState;
+	}
+
 	private bool TestCurrentSessionSelectionToggleForTest()
 	{
 		List<SessionInfo> sessions = CurrentSessionTypeItems();
@@ -502,29 +562,43 @@ internal sealed class MainWindowController
 	{
 		ShowImportPage();
 		BeginImportProgress(dryRun: false);
+		SetBusy(busy: true, "正在恢复项目与对话……");
 		UpdateImportStage("3 / 4 · 导入对话", "正在导入第 2/4 个对话包；文件处理在后台执行，界面仍可响应。");
+	}
+
+	public void EndBusyForTest()
+	{
+		SetBusy(busy: false, null);
 	}
 
 	public bool TestImportLayoutForTest()
 	{
 		window.UpdateLayout();
-		projectConflictCombo.BringIntoView();
-		window.UpdateLayout();
-		projectConflictCombo.ApplyTemplate();
+		bool projectControlsVisible = projectConflictCombo.IsVisible;
+		if (projectControlsVisible)
+		{
+			projectConflictCombo.BringIntoView();
+			window.UpdateLayout();
+			projectConflictCombo.ApplyTemplate();
+		}
 		importWorkflowGrid.UpdateLayout();
 		Point buttonBottom = importButton.TranslatePoint(new Point(0.0, importButton.ActualHeight), importActionBar);
 		bool actionButtonsFit = importActionBar.ActualHeight >= 72.0 &&
 			inspectButton.ActualHeight >= 37.0 &&
 			importButton.ActualHeight >= 37.0 &&
 			buttonBottom.Y <= importActionBar.ActualHeight - importActionBar.Padding.Bottom + 0.5;
-		bool customConflictField = projectConflictCombo.ActualHeight >= 39.0 &&
+		bool customConflictField = !projectControlsVisible || (projectConflictCombo.ActualHeight >= 39.0 &&
 			projectConflictCombo.Template != null &&
-			projectConflictCombo.Template.FindName("FieldSurface", projectConflictCombo) != null;
-		Popup conflictPopup = projectConflictCombo.Template?.FindName("PART_Popup", projectConflictCombo) as Popup;
-		projectConflictCombo.IsDropDownOpen = true;
-		window.UpdateLayout();
-		bool popupWorks = conflictPopup != null && conflictPopup.IsOpen;
-		projectConflictCombo.IsDropDownOpen = false;
+			projectConflictCombo.Template.FindName("FieldSurface", projectConflictCombo) != null);
+		bool popupWorks = true;
+		if (projectControlsVisible)
+		{
+			Popup conflictPopup = projectConflictCombo.Template?.FindName("PART_Popup", projectConflictCombo) as Popup;
+			projectConflictCombo.IsDropDownOpen = true;
+			window.UpdateLayout();
+			popupWorks = conflictPopup != null && conflictPopup.IsOpen;
+			projectConflictCombo.IsDropDownOpen = false;
+		}
 		if (!actionButtonsFit || !customConflictField || !popupWorks)
 		{
 			throw new InvalidOperationException($"导入布局诊断：ActionBar={importActionBar.ActualHeight:0.##}, Inspect={inspectButton.ActualHeight:0.##}, Import={importButton.ActualHeight:0.##}, ButtonBottom={buttonBottom.Y:0.##}, PaddingBottom={importActionBar.Padding.Bottom:0.##}, Combo={projectConflictCombo.ActualHeight:0.##}, CustomTemplate={customConflictField}, Popup={popupWorks}");
@@ -729,7 +803,17 @@ internal sealed class MainWindowController
 
 	private void WireEvents()
 	{
-		Find<System.Windows.Controls.Button>("CloseButton").Click += delegate
+		window.Closing += delegate(object sender, CancelEventArgs e)
+		{
+			if (!isBusy)
+			{
+				return;
+			}
+			e.Cancel = true;
+			SetStatus("当前操作尚未完成，请等待完成后再关闭。", error: false);
+			AppDialog.Show(window, "操作进行中", "暂时不能关闭窗口", "当前正在写入或校验本地数据。完成后即可安全关闭。", AppDialogTone.Warning, "继续等待");
+		};
+		closeButton.Click += delegate
 		{
 			window.Close();
 		};
@@ -1618,7 +1702,6 @@ internal sealed class MainWindowController
 		{
 			sessionModeHint.Text = UiLanguage.T(showSubagentSessions ? "勾选要处理的子代理，再使用右侧“删除所选”。" : "勾选要处理的主对话，再使用右侧“删除所选”；项目目录保持不变。");
 		}
-		UpdateSessionSelectionControls();
 		RefreshSessionView();
 	}
 
@@ -1630,6 +1713,7 @@ internal sealed class MainWindowController
 			bool flag = sessionView.Cast<object>().Any();
 			emptySessionsText.Visibility = (flag ? Visibility.Collapsed : Visibility.Visible);
 			UpdateSelectedCount();
+			UpdateSessionSelectionControls();
 		}
 	}
 
@@ -1677,10 +1761,15 @@ internal sealed class MainWindowController
 	{
 		return selectedProject?.Sessions.Where((SessionInfo session) => session.IsSubagent == showSubagentSessions).ToList() ?? new List<SessionInfo>();
 	}
+	private List<SessionInfo> CurrentVisibleSessionTypeItems()
+	{
+		return sessionView?.Cast<object>().OfType<SessionInfo>().Where((SessionInfo session) => session.IsSubagent == showSubagentSessions).ToList() ?? new List<SessionInfo>();
+	}
+
 
 	private void UpdateSessionSelectionControls()
 	{
-		List<SessionInfo> sessions = CurrentSessionTypeItems();
+		List<SessionInfo> sessions = CurrentVisibleSessionTypeItems();
 		int selectedCount = sessions.Count((SessionInfo session) => session.IsSelected);
 		bool allSelected = sessions.Count > 0 && selectedCount == sessions.Count;
 		toggleSessionSelectionButton.Content = UiLanguage.T(allSelected ? "全不选" : "全选");
@@ -1696,7 +1785,7 @@ internal sealed class MainWindowController
 
 	private void ToggleSessionSelection()
 	{
-		List<SessionInfo> sessions = CurrentSessionTypeItems();
+		List<SessionInfo> sessions = CurrentVisibleSessionTypeItems();
 		bool selectAll = sessions.Count > 0 && sessions.Any((SessionInfo session) => !session.IsSelected);
 		foreach (SessionInfo session in sessions)
 		{
@@ -2042,7 +2131,7 @@ internal sealed class MainWindowController
 			return;
 		}
 		bool deletingSubagents = showSubagentSessions;
-		List<SessionInfo> selectedSessions = CurrentSessionTypeItems().Where((SessionInfo session) => session.IsSelected).ToList();
+		List<SessionInfo> selectedSessions = CurrentVisibleSessionTypeItems().Where((SessionInfo session) => session.IsSelected).ToList();
 		string typeLabel = deletingSubagents ? "子代理" : "主对话";
 		string otherTypeLabel = deletingSubagents ? "主对话" : "子代理";
 		if (selectedSessions.Count == 0)
@@ -3480,19 +3569,30 @@ internal sealed class MainWindowController
 					{
 						args.Add("--dry-run");
 					}
-					CctResult import = await CctRunner.RunAsync(cct, args, workDir);
-					AppendLog("\n> " + import.CommandLine);
-					if (!string.IsNullOrWhiteSpace(import.StdOut))
+					List<string> plannedIds = plan.IdMap.Keys.Concat(plan.IdMap.Values).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+					try
 					{
-						AppendLog(import.StdOut.TrimEnd());
+						CctResult import = await CctRunner.RunAsync(cct, args, workDir);
+						AppendLog("\n> " + import.CommandLine);
+						if (!string.IsNullOrWhiteSpace(import.StdOut))
+						{
+							AppendLog(import.StdOut.TrimEnd());
+						}
+						if (!string.IsNullOrWhiteSpace(import.StdErr))
+						{
+							AppendLog(import.StdErr.TrimEnd());
+						}
+						if (import.ExitCode != 0)
+						{
+							throw new InvalidOperationException("cct 返回错误，详见操作记录。");
+						}
 					}
-					if (!string.IsNullOrWhiteSpace(import.StdErr))
+					finally
 					{
-						AppendLog(import.StdErr.TrimEnd());
-					}
-					if (import.ExitCode != 0)
-					{
-						throw new InvalidOperationException("cct 返回错误，详见操作记录。");
+						if (!dryRun && cctBackupTransaction != null)
+						{
+							await Task.Run(() => cctBackupTransaction.TrackImportedSessionFiles(TargetedThreadIndexer.SnapshotSessionFiles(codexHome).Where(path => !filesBeforeImport.Contains(path)), plannedIds));
+						}
 					}
 				}
 			}
@@ -3529,6 +3629,11 @@ internal sealed class MainWindowController
 			Dictionary<string, string> indexTargets = mapProjectPath ? targetByEffectiveBundle : null;
 			TargetedIndexResult indexResult = await Task.Run(() => indexTargets == null ? TargetedThreadIndexer.IndexImportedSessions(codexHome, effectiveBundlePaths, filesBeforeImport, copiesOnly: false, null, titleHints) : TargetedThreadIndexer.IndexImportedSessionsMapped(codexHome, effectiveBundlePaths, filesBeforeImport, copiesOnly: false, indexTargets, titleHints));
 			AppendLog($"索引兼容性验证：{indexResult.VisibilityVerifiedCount}/{indexResult.IndexedCount} 条通过；项目路径与会话历史模式均已核对。");
+			string paginatedWarning = BuildPaginatedImportWarning(indexResult.PaginatedCount);
+			if (!string.IsNullOrWhiteSpace(paginatedWarning))
+			{
+				AppendLog("\n" + paginatedWarning);
+			}
 			if (indexResult.DesktopStateFound)
 			{
 				AppendLog($"桌面项目归属：{indexResult.DesktopAssignmentVerifiedCount}/{indexResult.DesktopAssignmentExpectedCount} 条主对话通过；已登记 {indexResult.DesktopProjectCount} 个项目。");
@@ -3546,7 +3651,7 @@ internal sealed class MainWindowController
 			int removedCctBackups = cctBackupTransaction == null ? 0 : await Task.Run(() => cctBackupTransaction.CommitAndDeleteTemporaryBackups());
 			if (removedCctBackups > 0)
 			{
-				AppendLog("导入验证完成，已清理 cct 临时安全快照 " + removedCctBackups + " 个；不会留下 .cct-bak。");
+				AppendLog("导入验证完成，已清理 " + removedCctBackups + " 个事务安全快照。");
 			}
 			if (!string.IsNullOrWhiteSpace(indexResult.BackupPath))
 			{
@@ -3559,8 +3664,11 @@ internal sealed class MainWindowController
 			string projectSuccess = restored.Count == 0 ? string.Empty : $"已还原 {restored.Count} 个项目到：\n{target}\n新增 {createdFiles} 个文件，覆盖 {overwrittenFiles} 个，跳过 {skippedFiles} 个。\n\n";
 			string desktopSuccess = indexResult.DesktopStateFound ? $"\n桌面项目归属：{indexResult.DesktopAssignmentVerifiedCount}/{indexResult.DesktopAssignmentExpectedCount} 条主对话通过" : "\n桌面项目归属：未检测到桌面状态文件，已跳过";
 			string desktopBackup = string.IsNullOrWhiteSpace(indexResult.DesktopStateBackupPath) ? string.Empty : "\n\n桌面项目状态备份：\n" + indexResult.DesktopStateBackupPath;
-			SetStatus(restored.Count == 0 ? "对话导入完成。" : "项目与对话迁移完成。", error: false);
-			AppDialog.Show(window, "迁移完成", "索引、历史模式与桌面项目归属均已验证", projectSuccess + $"对话已导入 C 盘 Codex 目录，并分别关联到对应项目。\n\n新增索引：{indexResult.InsertedCount} 条\n更新索引：{indexResult.UpdatedCount} 条\n索引兼容性验证：{indexResult.VisibilityVerifiedCount}/{indexResult.IndexedCount} 条通过" + desktopSuccess + "\n\n现在重新打开 Codex，再打开迁入后的项目目录；对应主对话应直接出现在该项目侧栏中。" + (string.IsNullOrWhiteSpace(indexResult.BackupPath) ? string.Empty : "\n\n索引备份：\n" + indexResult.BackupPath) + desktopBackup, AppDialogTone.Success, "完成");
+			bool needsPaginatedVerification = indexResult.PaginatedCount > 0;
+			SetStatus(needsPaginatedVerification ? (UiLanguage.IsEnglish ? "Import completed; verify paginated conversations in Codex." : "导入完成，请在 Codex 中验证分页会话。") : (restored.Count == 0 ? "对话导入完成。" : "项目与对话迁移完成。"), error: false);
+			string completionTitle = needsPaginatedVerification ? (UiLanguage.IsEnglish ? "Import completed · verification required" : "迁移完成 · 需要验证") : "迁移完成";
+			string completionHeading = needsPaginatedVerification ? (UiLanguage.IsEnglish ? "Indexing passed; verify paginated history in Codex" : "索引已通过，请验证分页历史") : "索引、历史模式与桌面项目归属均已验证";
+			AppDialog.Show(window, completionTitle, completionHeading, projectSuccess + $"对话已导入 C 盘 Codex 目录，并分别关联到对应项目。\n\n新增索引：{indexResult.InsertedCount} 条\n更新索引：{indexResult.UpdatedCount} 条\n索引兼容性验证：{indexResult.VisibilityVerifiedCount}/{indexResult.IndexedCount} 条通过" + desktopSuccess + (string.IsNullOrWhiteSpace(paginatedWarning) ? string.Empty : "\n\n" + paginatedWarning) + "\n\n现在重新打开 Codex，再打开迁入后的项目目录并实际打开对应对话。" + (string.IsNullOrWhiteSpace(indexResult.BackupPath) ? string.Empty : "\n\n索引备份：\n" + indexResult.BackupPath) + desktopBackup, needsPaginatedVerification ? AppDialogTone.Warning : AppDialogTone.Success, "完成");
 		}
 		catch (OperationCanceledException ex)
 		{
@@ -3574,11 +3682,11 @@ internal sealed class MainWindowController
 			List<string> restoredTargets = contexts.Where((ImportProjectContext context) => context.RestoreResult != null).Select((ImportProjectContext context) => context.TargetPath).ToList();
 			if (restoredTargets.Count > 0)
 			{
-				AppendLog("\n注意：以下项目文件已还原，但后续会话导入未完成：\n" + string.Join("\n", restoredTargets) + "\n修复问题后可以重新导入同一迁移包。");
+				AppendLog("\n注意：以下项目文件已还原，但后续会话导入未完成：\n" + string.Join("\n", restoredTargets) + "\n修复问题后可重新导入同一迁移包；也可取消“还原项目文件”或选择“跳过同名文件”，避免再次改动已还原的项目文件。");
 			}
 			AppendLog("\n失败：" + ex.Message);
 			SetStatus("操作失败：" + ex.Message, error: true);
-			AppDialog.Show(window, dryRun ? "检查失败" : "导入失败", dryRun ? "迁移包没有通过检查" : "导入没有完成", ex.Message + "\n\n项目文件若已还原，右侧操作记录会明确列出；修复问题后可以重新导入同一迁移包。", AppDialogTone.Error, "查看记录");
+			AppDialog.Show(window, dryRun ? "检查失败" : "导入失败", dryRun ? "迁移包没有通过检查" : "导入没有完成", ex.Message + "\n\n项目文件若已还原，右侧操作记录会明确列出；修复问题后可重新导入同一迁移包；也可取消“还原项目文件”或选择“跳过同名文件”，避免再次改动已还原的项目文件。", AppDialogTone.Error, "查看记录");
 		}
 		finally
 		{
@@ -3604,9 +3712,9 @@ internal sealed class MainWindowController
 		try
 		{
 			CctBackupRollbackResult rollback = await Task.Run(() => transaction.RollbackAndDeleteTemporaryBackups());
-			if (rollback.RestoredCount > 0 || rollback.DeletedCount > 0)
+			if (rollback.RestoredCount > 0 || rollback.DeletedCount > 0 || rollback.RemovedImportedCount > 0)
 			{
-				AppendLog($"导入未完成：已从 cct 临时快照恢复 {rollback.RestoredCount} 个原会话，并清理 {rollback.DeletedCount} 个 .cct-bak 文件。");
+				AppendLog($"导入未完成：已恢复 {rollback.RestoredCount} 个原会话，移除 {rollback.RemovedImportedCount} 个本次新增会话，并清理 {rollback.DeletedCount} 个事务安全快照。");
 			}
 		}
 		catch (Exception cleanupError)
@@ -3664,6 +3772,7 @@ internal sealed class MainWindowController
 		SetBusy(busy: true, dryRun ? "正在检查项目与对话迁移包……" : "正在迁移项目与对话……");
 		string temp = null;
 		ProjectRestoreResult projectRestore = null;
+		CctBackupTransaction cctBackupTransaction = null;
 		try
 		{
 			try
@@ -3748,6 +3857,10 @@ internal sealed class MainWindowController
 					}
 				}
 				HashSet<string> filesBeforeImport = (dryRun ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) : TargetedThreadIndexer.SnapshotSessionFiles(codexHome));
+				if (!dryRun)
+				{
+					cctBackupTransaction = await Task.Run(() => CctBackupTransaction.Begin(codexHome));
+				}
 				if (!dryRun && restoreProjectFiles)
 				{
 					SetStatus("正在把项目文件还原到指定目录……", error: false);
@@ -3793,19 +3906,34 @@ internal sealed class MainWindowController
 					{
 						args.Add("--dry-run");
 					}
-					CctResult import = await CctRunner.RunAsync(cct, args, workDir);
-					AppendLog("\n> " + import.CommandLine);
-					if (!string.IsNullOrWhiteSpace(import.StdOut))
+					List<string> plannedIds = BundleFreshIdRewriter.ReadLineages(bundle)
+						.SelectMany(lineage => new string[2] { lineage.CurrentThreadId, lineage.OriginThreadId })
+						.Where(id => !string.IsNullOrWhiteSpace(id))
+						.Distinct(StringComparer.OrdinalIgnoreCase)
+						.ToList();
+					try
 					{
-						AppendLog(import.StdOut.TrimEnd());
+						CctResult import = await CctRunner.RunAsync(cct, args, workDir);
+						AppendLog("\n> " + import.CommandLine);
+						if (!string.IsNullOrWhiteSpace(import.StdOut))
+						{
+							AppendLog(import.StdOut.TrimEnd());
+						}
+						if (!string.IsNullOrWhiteSpace(import.StdErr))
+						{
+							AppendLog(import.StdErr.TrimEnd());
+						}
+						if (import.ExitCode != 0)
+						{
+							throw new InvalidOperationException("cct 返回错误，详见操作记录。");
+						}
 					}
-					if (!string.IsNullOrWhiteSpace(import.StdErr))
+					finally
 					{
-						AppendLog(import.StdErr.TrimEnd());
-					}
-					if (import.ExitCode != 0)
-					{
-						throw new InvalidOperationException("cct 返回错误，详见操作记录。");
+						if (!dryRun && cctBackupTransaction != null)
+						{
+							await Task.Run(() => cctBackupTransaction.TrackImportedSessionFiles(TargetedThreadIndexer.SnapshotSessionFiles(codexHome).Where(path => !filesBeforeImport.Contains(path)), plannedIds));
+						}
 					}
 				}
 				if (dryRun)
@@ -3826,26 +3954,39 @@ internal sealed class MainWindowController
 					}
 				}
 				TargetedIndexResult targetedIndexResult = TargetedThreadIndexer.IndexImportedSessions(codexHome, bundlePaths, filesBeforeImport, string.Equals(conflictMode, "copy", StringComparison.OrdinalIgnoreCase), mapProjectPath ? target : null, dictionary);
+				string paginatedWarning = BuildPaginatedImportWarning(targetedIndexResult.PaginatedCount);
+				if (!string.IsNullOrWhiteSpace(paginatedWarning))
+				{
+					AppendLog("\n" + paginatedWarning);
+				}
+				int removedCctBackups = cctBackupTransaction == null ? 0 : await Task.Run(() => cctBackupTransaction.CommitAndDeleteTemporaryBackups());
 				AppendLog($"定点索引完成：新增 {targetedIndexResult.InsertedCount} 条，更新 {targetedIndexResult.UpdatedCount} 条；全局回填状态未修改。");
+				if (removedCctBackups > 0)
+				{
+					AppendLog($"导入事务已提交，并清理 {removedCctBackups} 个安全快照。");
+				}
 				if (!string.IsNullOrWhiteSpace(targetedIndexResult.BackupPath))
 				{
 					AppendLog("索引备份：" + targetedIndexResult.BackupPath);
 				}
-				SetStatus(projectRestore == null ? "导入完成，本次会话已完成定点登记。" : "项目与对话迁移完成。", error: false);
+				bool needsPaginatedVerification = targetedIndexResult.PaginatedCount > 0;
+				SetStatus(needsPaginatedVerification ? (UiLanguage.IsEnglish ? "Import completed; verify paginated conversations in Codex." : "导入完成，请在 Codex 中验证分页会话。") : (projectRestore == null ? "导入完成，本次会话已完成定点登记。" : "项目与对话迁移完成。"), error: false);
 				string text = ((duplicateCleanup.MovedCount > 0) ? $"\n\n另外，已将旧版产生的 {duplicateCleanup.MovedCount} 个重复副本移入可恢复目录：\n{duplicateCleanup.TrashDirectory}" : string.Empty);
 				string projectSuccess = (projectRestore == null) ? string.Empty : $"项目文件已还原到：\n{projectRestore.TargetPath}\n新增 {projectRestore.CreatedFileCount} 个，覆盖 {projectRestore.OverwrittenFileCount} 个，跳过 {projectRestore.SkippedFileCount} 个。\n\n" + (string.IsNullOrWhiteSpace(projectRestore.BackupPath) ? string.Empty : ("项目覆盖备份：\n" + projectRestore.BackupPath + "\n\n"));
-				AppDialog.ShowCompat(window, projectSuccess + $"对话已导入 C 盘 Codex 目录并完成定点索引。\n\n新增索引 {targetedIndexResult.InsertedCount} 条，更新索引 {targetedIndexResult.UpdatedCount} 条。\n全局会话回填状态保持原值，不会扫描全部历史会话。\n\n请完全退出并重新打开 Codex，让侧栏重新读取索引。" + text + (string.IsNullOrWhiteSpace(targetedIndexResult.BackupPath) ? string.Empty : ("\n\n索引备份：\n" + targetedIndexResult.BackupPath)), "迁移成功", MessageBoxButton.OK, MessageBoxImage.Asterisk);
+				AppDialog.ShowCompat(window, projectSuccess + $"对话已导入 C 盘 Codex 目录并完成定点索引。\n\n新增索引 {targetedIndexResult.InsertedCount} 条，更新索引 {targetedIndexResult.UpdatedCount} 条。\n全局会话回填状态保持原值，不会扫描全部历史会话。" + (string.IsNullOrWhiteSpace(paginatedWarning) ? string.Empty : "\n\n" + paginatedWarning) + "\n\n请完全退出并重新打开 Codex，让侧栏重新读取索引并实际打开对应对话。" + text + (string.IsNullOrWhiteSpace(targetedIndexResult.BackupPath) ? string.Empty : ("\n\n索引备份：\n" + targetedIndexResult.BackupPath)), needsPaginatedVerification ? (UiLanguage.IsEnglish ? "Import completed · verification required" : "迁移完成 · 需要验证") : "迁移成功", MessageBoxButton.OK, needsPaginatedVerification ? MessageBoxImage.Warning : MessageBoxImage.Asterisk);
 			}
 			catch (OperationCanceledException ex)
 			{
+				await RollbackCctImportAsync(cctBackupTransaction);
 				AppendLog("\n" + ex.Message);
 				SetStatus("操作已取消，没有继续导入。", error: false);
 			}
 			catch (Exception ex2)
 			{
+				await RollbackCctImportAsync(cctBackupTransaction);
 				if (projectRestore != null)
 				{
-					AppendLog("\n注意：项目文件已还原到 " + projectRestore.TargetPath + "，但后续会话导入未完成。修复问题后可以重新导入同一迁移包。");
+					AppendLog("\n注意：项目文件已还原到 " + projectRestore.TargetPath + "，但后续会话导入未完成。重试时可取消“还原项目文件”，或选择“跳过同名文件”，避免再次改动已有项目文件。");
 				}
 				AppendLog("\n失败：" + ex2.Message);
 				SetStatus("操作失败：" + ex2.Message, error: true);
@@ -3860,6 +4001,17 @@ internal sealed class MainWindowController
 			}
 			SetBusy(busy: false, null);
 		}
+	}
+
+	internal static string BuildPaginatedImportWarning(int count)
+	{
+		if (count <= 0)
+		{
+			return string.Empty;
+		}
+		return UiLanguage.IsEnglish
+			? $"This import contains {count} paginated conversation(s). Their structure and index metadata passed validation, but full-history opening and resumption still depend on the destination Codex version. Keep the source package until you have opened and verified them in Codex."
+			: $"本次包含 {count} 个分页型（paginated）会话。其文件结构与索引元数据已通过检查，但完整历史打开和恢复仍取决于目标 Codex 版本；请在 Codex 中实际打开验证，确认前保留源迁移包。";
 	}
 
 	private void BeginImportProgress(bool dryRun)
@@ -3900,6 +4052,7 @@ internal sealed class MainWindowController
 		busyProgress.Visibility = ((!busy) ? Visibility.Collapsed : Visibility.Visible);
 		window.Cursor = (busy ? System.Windows.Input.Cursors.Wait : System.Windows.Input.Cursors.Arrow);
 		refreshButton.IsEnabled = !busy;
+		closeButton.IsEnabled = !busy;
 		browseCctButton.IsEnabled = !busy;
 		browseBackupFolderButton.IsEnabled = !busy;
 		browsePackageButton.IsEnabled = !busy;

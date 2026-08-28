@@ -10,6 +10,16 @@ Codex Conversation Migrator 是一个本地运行的 Windows 桌面工具，用�
 
 > 本项目是非官方社区工具，与 OpenAI 没有关联，也未获得 OpenAI 背书。Codex 的本地存储格式可能变化；正式导入前请先执行只读检查，并为重要数据保留独立备份。
 
+## 如何选择功能
+
+| 你的目的 | 建议操作 | 导入身份模式 |
+| --- | --- | --- |
+| 同一台电脑移动或重命名项目 | 创建 `.codexchat`，导入时映射到新目录 | **按原始编号合并** |
+| 自己把项目目录复制到另一台电脑 | 分别复制项目目录与 `.codexchat` | 继续同一对话用合并；需要完全独立副本用复制 |
+| 项目文件和对话一起迁移 | 创建包含一个或多个项目的 `.codexproject` | 合并或独立复制 |
+| 保留一份互不影响的对话副本 | 两种正式备份均可 | **作为新对话复制** |
+| 查看或释放本地存储空间 | 使用主对话、子代理和软件回收站页面 | 先移入软件回收站，确认后再永久删除 |
+
 ## 它解决什么问题
 
 | 使用场景 | 常见问题 | 本工具的处理方式 |
@@ -37,10 +47,10 @@ Codex Conversation Migrator 是一个本地运行的 Windows 桌面工具，用�
 ### 对话迁移或完整项目迁移
 
 - **只迁移对话**：先自行复制项目目录，再使用 `.codexchat` 把选中的主对话迁入目标电脑并关联到该项目。
-- **项目与对话一起迁移**：使用 `.codexproject` 将一个或多个项目目录、空目录、主对话和子代理对话打包到同一个文件。
+- **项目与对话一起迁移**：使用 `.codexproject` 将一个或多个项目的普通文件、空目录、主对话和子代理对话打包到同一个文件；目录联接、符号链接、NTFS 权限和备用数据流不会迁移。
 - **往返迁移并继续合并**：电脑 A 迁移到电脑 B、在 B 上继续工作后，可再次备份并迁回 A；选择“按原始编号合并”即可在目标项目范围内识别同源对话并合并新增内容。
 - **保留独立副本**：选择“作为新对话复制”时，每次都会生成新的 Thread ID 和独立会话文件，删除其中一份不会影响另一份。
-- **兼容新版 Codex 历史模式**：导入时保留并验证每条对话的 `legacy` 或 `paginated` 模式，避免迁入后侧边栏可见、点开却报错。
+- **兼容 Codex 历史模式**：导入时保留并核对每条对话的 `legacy` 或 `paginated` 模式；分页记录还会检查连续 `ordinal` 与 `turn_context`。`paginated` 完整历史目前仍取决于目标 Codex 版本，导入后应实际打开核验，并保留源备份。 OpenAI 当前的 [Codex app-server 文档](https://developers.openai.com/codex/app-server) 将分页历史标为实验能力，并说明完整历史读取和恢复尚未支持。
 
 ### 查看、回收与删除
 
@@ -57,13 +67,13 @@ Codex Conversation Migrator 是一个本地运行的 Windows 桌面工具，用�
 
 > **关于释放 C 盘空间：** 软件回收站位于 Codex 数据目录中，移入回收站主要用于防止误删，并不会明显释放该磁盘空间。确认不再需要记录后，还需从软件回收站永久删除，才会真正释放相应空间。
 
-> **删除或恢复前：** 请完全退出 Codex，避免运行中的桌面端把更新后的索引覆盖回去。
+> **正式导入、删除或恢复前：** 请完全退出 Codex，避免运行中的桌面端把更新后的会话、索引或侧边栏状态覆盖回去。
 
 ## 下载与运行（普通用户）
 
-发布包是便携版，无需安装，也不需要 .NET SDK、Targeting Pack 或仓库中的任何 PowerShell 开发脚本。运行环境为 64 位 Windows 10/11，并需要 .NET Framework 4.8 运行库。
+发布包是便携版，无需安装；普通用户不需要 .NET SDK、Targeting Pack 或仓库中的 PowerShell 开发脚本。运行环境为 64 位 Windows 10/11，并需要 [.NET Framework 4.8 运行库](https://dotnet.microsoft.com/zh-cn/download/dotnet-framework/net48)。
 
-查看、备份和导入可直接使用发布包。**删除会话和修复旧侧边栏残留还需要系统中存在可独立调用的 Codex CLI (`codex.exe`)**；工具会自动查找常见 npm 安装路径、`PATH` 及程序目录。先在 PowerShell 中运行 `codex --version` 检查；如果命令不存在，请按 [OpenAI Codex CLI 文档](https://developers.openai.com/codex/cli) 安装，也可以使用 npm：
+查看、备份和导入可直接使用发布包，因为包内已经包含经过校验的 `cct.exe`。**删除会话和修复旧侧边栏残留还需要系统中存在可独立调用的 Codex CLI（`codex.exe`）**；工具会自动查找常见 npm 安装路径、`PATH`、程序目录及版本化的 Codex/VS Code 扩展运行目录，并优先使用发现的较新版本。先在 PowerShell 中运行 `codex --version` 检查；如果命令不存在，请按 [OpenAI Codex CLI 文档](https://developers.openai.com/codex/cli)安装，也可以使用 npm：
 
 ```powershell
 npm install -g @openai/codex
@@ -73,21 +83,33 @@ codex --version
 找不到 CLI 或官方删除被拒绝时，工具会终止删除并保留原会话。
 
 1. 从 Releases 下载 `CodexConversationMigrator-Windows-v3.0.0.zip` 和 `SHA256SUMS.txt`。
-2. 将 ZIP 完整解压到一个新文件夹。不要直接在压缩包内运行，并保持 EXE、XAML 和 `cct.exe` 位于同一目录。
-3. 双击 `Start.cmd`；也可以直接运行 `CodexConversationMigrator.exe`。
-4. 升级时请将新版本解压到单独文件夹，不要与旧版文件混放。
+2. 解压前先在 PowerShell 中校验 ZIP：
+
+   ```powershell
+   $zip = '.\CodexConversationMigrator-Windows-v3.0.0.zip'
+   $expected = ((Get-Content .\SHA256SUMS.txt -Raw).Trim() -split '\s+')[0]
+   $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
+   if ($actual -ne $expected) { throw 'SHA-256 不一致，请勿运行此发布包。' }
+   $actual
+   ```
+
+3. 将 ZIP 完整解压到一个新文件夹。不要直接在压缩包内运行，并保持 EXE、XAML 和 `cct.exe` 位于同一目录。
+4. 双击 `Start.cmd`；也可以直接运行 `CodexConversationMigrator.exe`。
+5. 升级时请解压到新的独立文件夹，不要与旧版文件混放。
+
+当前主程序 EXE 和随包提供的 `cct.exe` 均没有 Authenticode 数字签名，因此 Windows SmartScreen 可能显示“未知发布者”。请先用 `SHA256SUMS.txt` 核对下载文件，并且只运行来自可信 Release 页的文件。哈希一致能够发现下载文件被改变，但不能代替发布者身份认证。
 
 ## 基本使用
 
 ### 创建备份
 
-1. 打开“备份对话”，选择“项目＋对话”或“仅对话”。
+1. 打开“管理与备份”，选择“项目＋对话”或“仅对话”。
 2. 勾选要备份的项目或主对话；可以跨多个项目连续选择。
 3. 选择备份保存目录，创建 `.codexproject` 或 `.codexchat`。
 
 ### 恢复或迁移
 
-1. 打开“导入备份”，选择备份文件。
+1. 打开“导入与恢复”，选择备份文件。
 2. 导入 `.codexchat` 时，为每个项目选择实际目录；导入 `.codexproject` 时，选择项目文件的还原位置。
 3. 希望以后继续合并同源对话时使用“按原始编号合并”；希望副本完全独立时使用“作为新对话复制”。
 4. 先执行“检查（不写入）”；检查通过后完全退出 Codex，再开始正式导入。
@@ -98,7 +120,7 @@ codex --version
 1. 选择项目，然后在“主对话”和“子代理对话”之间切换。
 2. 查看最近更新时间、大小、Thread ID、路径或只读对话内容。
 3. 逐条勾选或使用“全选”，然后点击“删除所选”；若主对话存在后代子代理，确认窗口会显示额外影响数量。
-4. 删除或恢复前完全退出 Codex；如果旧版本已经留下点开报错的侧边栏条目，先在 Codex 中点开一次让错误写入日志，再完全退出 Codex，打开本工具点击“刷新”，核对提示中的标题和 Thread ID 后确认清理。如果会话已经不存在但侧边栏仍显示，刷新会完成准确匹配的侧边栏清理，再提示重新打开 Codex。
+4. 删除或恢复前完全退出 Codex；如果旧版本已经留下点开报错的侧边栏条目，先在 Codex 中点开一次让错误写入日志，再完全退出 Codex，打开本工具点击“刷新/修复”，核对提示中的标题和 Thread ID 后确认清理。如果会话已经不存在但侧边栏仍显示，刷新会完成准确匹配的侧边栏清理，再提示重新打开 Codex。
 5. 可能需要恢复时先移入软件回收站；确认不再需要且希望释放空间时再永久删除。
 
 ## 典型工作流
@@ -106,7 +128,7 @@ codex --version
 ### 1. 同一台电脑移动或重命名项目
 
 1. 为原项目选择需要保留的对话并创建 `.codexchat`。
-2. 在“导入备份”中选择新的项目目录，并保持“把对话关联到上面的项目位置”开启。
+2. 在“导入与恢复”中选择新的项目目录，并保持“把对话关联到上面的项目位置”开启。
 3. 先执行“检查（不写入）”；检查通过后完全退出 Codex，再正式导入。
 4. 重新打开 Codex 和新项目目录，确认对话已出现在该项目下。
 
@@ -140,23 +162,32 @@ codex --version
 
 需要 Windows 10/11、.NET SDK 8.x、.NET Framework 4.8 Targeting Pack，以及 PowerShell 5.1 或更高版本。
 
-在仓库根目录只需运行一条命令，即可自动补齐缺少的固定版本组件、编译、测试并生成发布 ZIP：
+`VERSION` 是唯一权威发布版本。在仓库根目录运行一条命令，即可校验版本、补齐缺少的固定依赖、编译、运行功能与界面渲染测试、清理旧版本地 ZIP，并生成当前发布包：
+
+```powershell
+.\package.ps1
+```
+
+`-Version` 参数可以省略；提供时仅作为一致性断言，必须与 `VERSION` 完全相同：
 
 ```powershell
 .\package.ps1 -Version 3.0.0
 ```
 
-`package.ps1` 会自动调用编译和测试脚本。如果缺少 `cct.exe`，编译脚本才会运行 `Get-Cct.ps1`，下载固定版本的 `cct` v1.2.0，并校验压缩包和 EXE 的 SHA-256。完成后的 ZIP 与 `SHA256SUMS.txt` 位于 `release/`；桌面软件本身不会联网下载构建依赖。
+`package.ps1` 会自动调用编译、测试和发布校验脚本。如果缺少 `cct.exe`，编译脚本会运行 `Get-Cct.ps1`，下载固定版本的 `cct` v1.2.0，并校验压缩包和 EXE 的 SHA-256。确定性 ZIP 与 `SHA256SUMS.txt` 位于 `release/`；桌面软件本身不会联网下载构建依赖。
+
+维护者发布步骤见 [docs/RELEASING.md](docs/RELEASING.md)。
 
 ## 隐私与安全
 
-- 软件本地运行，没有遥测，也没有云同步。
-- 备份文件可能包含提示词、源码、命令输出、本机路径和密钥，请按敏感文件保管。
+- 软件在本地运行，没有遥测、云同步、账号系统或自动更新功能。
+- 正式备份与软件回收站内容均未加密，可能包含提示词、源码、命令输出、本机路径、环境信息和密钥，请按敏感文件保管。
+- 项目迁移包会保存普通文件和空目录，但会跳过目录联接和符号链接，也不会迁移 NTFS 权限或备用数据流。
 - 永久删除无法从本工具恢复；执行前请确认对话和项目路径。
-- 导入会更新 Codex 会话文件、本地任务索引和桌面项目归属。工具会创建安全备份并验证写入，但重要数据仍建议另行备份。
-- 不要把真实备份包、JSONL 会话或 Codex 数据库上传到公开 Issue。
+- 导入会更新 Codex 会话文件、本地任务索引和桌面项目归属。工具会验证写入，但重要数据仍应另行备份。
+- 不要把真实备份包、JSONL 会话、Codex 数据库或未脱敏截图上传到公开 Issue。
 
-更多说明见 [PRIVACY.md](PRIVACY.md)、[SECURITY.md](SECURITY.md) 和 [备份格式说明](docs/BACKUP_FORMATS.md)。
+更多说明见 [PRIVACY.md](PRIVACY.md)、[SECURITY.md](SECURITY.md)、[备份格式说明](docs/BACKUP_FORMATS.md)、[v3.0.0 发布说明](docs/RELEASE_NOTES_v3.0.0.md)、[CHANGELOG.md](CHANGELOG.md) 和 [SUPPORT.md](SUPPORT.md)。
 
 ## 第三方组件与许可证
 

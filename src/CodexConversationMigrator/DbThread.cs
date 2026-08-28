@@ -17,6 +17,8 @@ internal sealed class DbThread
 	public string Source { get; set; }
 
 	public string ThreadSource { get; set; }
+	public string HistoryMode { get; set; }
+
 
 	public string ParentThreadId { get; set; }
 

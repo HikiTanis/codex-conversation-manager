@@ -71,6 +71,10 @@ internal static class Program
 		}
 		if (!string.IsNullOrWhiteSpace(text2))
 		{
+			if (Path.GetFileNameWithoutExtension(text2).IndexOf("paginated-completion", StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				return RunPaginatedCompletionRenderTest(text2);
+			}
 			if (Path.GetFileNameWithoutExtension(text2).IndexOf("dialog-theme", StringComparison.OrdinalIgnoreCase) >= 0)
 			{
 				return RunDialogThemeRenderTest(text2);
@@ -144,17 +148,80 @@ internal static class Program
 			MainWindowController controller = new MainWindowController(cct);
 			application2.MainWindow = controller.Window;
 			bool tested = false;
-			controller.Window.ContentRendered += delegate
+			controller.Window.ContentRendered += async delegate
 			{
 				if (!tested)
 				{
 					tested = true;
+					await controller.InitialLoadTask;
 					IntPtr handle = new WindowInteropHelper(controller.Window).Handle;
 					File.WriteAllText(output, ChromeVerifier.Verify(handle), Encoding.UTF8);
+					controller.EndBusyForTest();
 					controller.Window.Close();
 				}
 			};
 			return application2.Run(controller.Window);
+		}
+		catch (Exception ex)
+		{
+			try
+			{
+				File.WriteAllText(output + ".error.txt", ex.ToString(), Encoding.UTF8);
+			}
+			catch
+			{
+			}
+			return 1;
+		}
+	}
+
+	private static RenderTargetBitmap RenderWithDialogBackground(FrameworkElement visual, int width, int height)
+	{
+		RenderTargetBitmap raw = new RenderTargetBitmap(width, height, 96.0, 96.0, PixelFormats.Pbgra32);
+		raw.Render(visual);
+		DrawingVisual composed = new DrawingVisual();
+		using (DrawingContext drawing = composed.RenderOpen())
+		{
+			drawing.DrawRectangle(DialogUi.Brush("#F7F7F4"), null, new Rect(0.0, 0.0, width, height));
+			drawing.DrawImage(raw, new Rect(0.0, 0.0, width, height));
+		}
+		RenderTargetBitmap result = new RenderTargetBitmap(width, height, 96.0, 96.0, PixelFormats.Pbgra32);
+		result.Render(composed);
+		return result;
+	}
+
+	private static int RunPaginatedCompletionRenderTest(string output)
+	{
+		try
+		{
+			Application application = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
+			Window preview = AppDialog.CreatePaginatedCompletionPreviewForTest();
+			application.MainWindow = preview;
+			bool captured = false;
+			preview.ContentRendered += async delegate
+			{
+				if (captured)
+				{
+					return;
+				}
+				captured = true;
+				await Task.Delay(250);
+				preview.UpdateLayout();
+				FrameworkElement visual = preview;
+				int width = Math.Max(1, (int)Math.Ceiling(visual.ActualWidth));
+				int height = Math.Max(1, (int)Math.Ceiling(visual.ActualHeight));
+				RenderTargetBitmap bitmap = RenderWithDialogBackground(visual, width, height);
+				PngBitmapEncoder encoder = new PngBitmapEncoder
+				{
+					Frames = { BitmapFrame.Create(bitmap) }
+				};
+				using (FileStream stream = new FileStream(output, FileMode.Create, FileAccess.Write, FileShare.None))
+				{
+					encoder.Save(stream);
+				}
+				preview.Close();
+			};
+			return application.Run(preview);
 		}
 		catch (Exception ex)
 		{
@@ -188,14 +255,10 @@ internal static class Program
 				}
 				await Task.Delay(350);
 				preview.UpdateLayout();
-				if (!(preview.Content is FrameworkElement visual))
-				{
-					throw new InvalidOperationException("dialog preview content unavailable");
-				}
+				FrameworkElement visual = preview;
 				int width = Math.Max(1, (int)Math.Ceiling(visual.ActualWidth));
 				int height = Math.Max(1, (int)Math.Ceiling(visual.ActualHeight));
-				RenderTargetBitmap bitmap = new RenderTargetBitmap(width, height, 96.0, 96.0, PixelFormats.Pbgra32);
-				bitmap.Render(visual);
+				RenderTargetBitmap bitmap = RenderWithDialogBackground(visual, width, height);
 				BitmapSource finalBitmap = bitmap;
 				System.Windows.Controls.Primitives.Popup popup = previewCombo?.Template.FindName("PART_Popup", previewCombo) as System.Windows.Controls.Primitives.Popup;
 				if (popup?.Child is FrameworkElement popupVisual && popupVisual.ActualWidth > 0.0 && popupVisual.ActualHeight > 0.0)
@@ -204,7 +267,7 @@ internal static class Program
 					int popupHeight = Math.Max(1, (int)Math.Ceiling(popupVisual.ActualHeight));
 					RenderTargetBitmap popupBitmap = new RenderTargetBitmap(popupWidth, popupHeight, 96.0, 96.0, PixelFormats.Pbgra32);
 					popupBitmap.Render(popupVisual);
-					Point popupOffset = visual.PointFromScreen(popupVisual.PointToScreen(new Point(0.0, 0.0)));
+					Point popupOffset = previewCombo.TranslatePoint(new Point(0.0, previewCombo.ActualHeight + 5.0), visual);
 					int combinedWidth = Math.Max(width, (int)Math.Ceiling(popupOffset.X + popupVisual.ActualWidth));
 					int combinedHeight = Math.Max(height, (int)Math.Ceiling(popupOffset.Y + popupVisual.ActualHeight));
 					DrawingVisual composed = new DrawingVisual();
@@ -343,6 +406,14 @@ internal static class Program
 						{
 							throw new InvalidOperationException("main all/select-none/selected-delete interaction failed");
 						}
+						if (!controller.TestFilteredSelectionStateForTest())
+						{
+							throw new InvalidOperationException("search-hidden selection controls did not follow the visible result set");
+						}
+						if (!controller.TestSessionTypeSwitchSelectionStateForTest())
+						{
+							throw new InvalidOperationException("main/subagent switch retained stale selection controls");
+						}
 						if (!(await controller.WaitForSelectedProjectStorageForTest()))
 						{
 							throw new InvalidOperationException("project storage metrics did not complete");
@@ -385,6 +456,7 @@ internal static class Program
 					{
 						encoder.Save(stream);
 					}
+					controller.EndBusyForTest();
 					controller.Window.Close();
 				}
 			};
@@ -462,9 +534,39 @@ internal static class Program
 		string projectPayloadTest = Path.Combine(Path.GetTempPath(), "codex-migrator-project-payload-test-" + Guid.NewGuid().ToString("N"));
 		try
 		{
+			Directory.CreateDirectory(text);
 			Environment.SetEnvironmentVariable("CODEX_HOME", text);
 			ConversationIndexMaintenance.LogRootOverride = Path.Combine(text, "codex-desktop-logs");
 			CodexDesktopTaskCache.UserDataRootOverride = Path.Combine(text, "desktop-web-cache");
+			string olderRuntime = Path.Combine(text, "codex-runtime-older.exe");
+			string newerRuntime = Path.Combine(text, "codex-runtime-newer.exe");
+			File.WriteAllText(olderRuntime, "synthetic executable without PE version metadata", Encoding.UTF8);
+			File.WriteAllText(newerRuntime, "synthetic executable without PE version metadata", Encoding.UTF8);
+			CodexAppServerThreadDeletion.VersionOutputOverrideForTest = path => path.IndexOf("newer", StringComparison.OrdinalIgnoreCase) >= 0 ? "codex-cli 0.150.0-alpha.12.2" : "codex-cli 0.148.0";
+			try
+			{
+				string selectedRuntime = CodexAppServerThreadDeletion.SelectNewestCodexCandidateForTest(new string[2] { olderRuntime, newerRuntime });
+				if (!string.Equals(selectedRuntime, newerRuntime, StringComparison.OrdinalIgnoreCase))
+				{
+					throw new InvalidOperationException("Codex runtime CLI-version probe did not select the newer executable");
+				}
+			}
+			finally
+			{
+				CodexAppServerThreadDeletion.VersionOutputOverrideForTest = null;
+			}
+			string desktopRuntimeRoot = Path.Combine(text, "desktop-runtime");
+			string nestedDesktopRuntime = Path.Combine(desktopRuntimeRoot, "bin", "a5c9108151f176e9", "codex.exe");
+			string versionedDesktopRuntime = Path.Combine(desktopRuntimeRoot, "app-0.150.0", "resources", "bin", "codex.exe");
+			Directory.CreateDirectory(Path.GetDirectoryName(nestedDesktopRuntime));
+			Directory.CreateDirectory(Path.GetDirectoryName(versionedDesktopRuntime));
+			IReadOnlyList<string> desktopCandidates = CodexAppServerThreadDeletion.CodexDesktopCandidatesForTest(desktopRuntimeRoot);
+			if (!desktopCandidates.Contains(Path.Combine(desktopRuntimeRoot, "bin", "codex.exe"), StringComparer.OrdinalIgnoreCase) ||
+				!desktopCandidates.Contains(nestedDesktopRuntime, StringComparer.OrdinalIgnoreCase) ||
+				!desktopCandidates.Contains(versionedDesktopRuntime, StringComparer.OrdinalIgnoreCase))
+			{
+				throw new InvalidOperationException("Codex Desktop runtime discovery did not include direct and versioned install paths");
+			}
 			if (runRealOfficialDelete)
 			{
 				RunRealOfficialThreadDeleteIntegrationTest();
@@ -485,6 +587,7 @@ internal static class Program
 			string text3 = Path.Combine(text2, "rollout-2026-01-02T03-04-05-" + testThreadId + ".jsonl");
 			JavaScriptSerializer javaScriptSerializer = CctRunner.NewSerializer();
 			Dictionary<string, object> dictionary = new Dictionary<string, object>();
+			dictionary.Add("ordinal", 0);
 			dictionary.Add("timestamp", "2026-01-02T03:04:05Z");
 			dictionary.Add("type", "session_meta");
 			dictionary.Add("payload", new Dictionary<string, object>
@@ -499,9 +602,22 @@ internal static class Program
 				{ "history_mode", "paginated" }
 			});
 			Dictionary<string, object> obj = dictionary;
+			Dictionary<string, object> turnContext = new Dictionary<string, object>();
+			turnContext.Add("ordinal", 1);
+			turnContext.Add("timestamp", "2026-01-02T03:04:05Z");
+			turnContext.Add("type", "turn_context");
+			turnContext.Add("payload", new Dictionary<string, object>
+			{
+				{ "turn_id", "22222222-2222-4222-8222-222222222222" },
+				{ "cwd", "C:\\fake-project" },
+				{ "approval_policy", "never" },
+				{ "model", "test-model" }
+			});
+			Dictionary<string, object> objContext = turnContext;
 			Dictionary<string, object> dictionary2 = new Dictionary<string, object>();
 			dictionary2.Add("timestamp", "2026-01-02T03:04:05Z");
 			dictionary2.Add("type", "response_item");
+			dictionary2.Add("ordinal", 2);
 			dictionary2.Add("payload", new Dictionary<string, object>
 			{
 				{ "type", "message" },
@@ -522,6 +638,7 @@ internal static class Program
 			Dictionary<string, object> dictionary3 = new Dictionary<string, object>();
 			dictionary3.Add("timestamp", "2026-01-02T03:05:06Z");
 			dictionary3.Add("type", "response_item");
+			dictionary3.Add("ordinal", 3);
 			dictionary3.Add("payload", new Dictionary<string, object>
 			{
 				{ "type", "message" },
@@ -539,7 +656,7 @@ internal static class Program
 				}
 			});
 			Dictionary<string, object> obj3 = dictionary3;
-			string fixtureContents = javaScriptSerializer.Serialize(obj) + Environment.NewLine + javaScriptSerializer.Serialize(obj2) + Environment.NewLine + javaScriptSerializer.Serialize(obj3) + Environment.NewLine;
+			string fixtureContents = javaScriptSerializer.Serialize(obj) + Environment.NewLine + javaScriptSerializer.Serialize(objContext) + Environment.NewLine + javaScriptSerializer.Serialize(obj2) + Environment.NewLine + javaScriptSerializer.Serialize(obj3) + Environment.NewLine;
 			File.WriteAllText(text3, fixtureContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 			ThreadIndexMetadata paginatedMetadata = TargetedThreadIndexer.ReadMetadataForTest(text3, "功能测试", "真正的问题");
 			if (!string.Equals(paginatedMetadata.HistoryMode, CodexHistoryMode.Paginated, StringComparison.Ordinal) ||
@@ -550,6 +667,38 @@ internal static class Program
 			SessionInfo sessionInfo = new SessionInfo();
 			sessionInfo.ThreadId = testThreadId;
 			sessionInfo.SessionPath = text3;
+			string missingOrdinalPath = Path.Combine(text2, "rollout-missing-ordinal-" + testThreadId + ".jsonl");
+			Dictionary<string, object> missingOrdinalMeta = new Dictionary<string, object>(obj);
+			missingOrdinalMeta.Remove("ordinal");
+			File.WriteAllText(missingOrdinalPath, javaScriptSerializer.Serialize(missingOrdinalMeta) + Environment.NewLine + javaScriptSerializer.Serialize(objContext) + Environment.NewLine, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			bool missingOrdinalRejected = false;
+			try
+			{
+				TargetedThreadIndexer.ReadMetadataForTest(missingOrdinalPath, "无效序号", "无效序号");
+			}
+			catch (InvalidDataException ex)
+			{
+				missingOrdinalRejected = ex.Message.IndexOf("ordinal", StringComparison.OrdinalIgnoreCase) >= 0;
+			}
+			string gapOrdinalPath = Path.Combine(text2, "rollout-gap-ordinal-" + testThreadId + ".jsonl");
+			Dictionary<string, object> gapRecord = new Dictionary<string, object>(obj3);
+			gapRecord["ordinal"] = 4;
+			File.WriteAllText(gapOrdinalPath, javaScriptSerializer.Serialize(obj) + Environment.NewLine + javaScriptSerializer.Serialize(objContext) + Environment.NewLine + javaScriptSerializer.Serialize(obj2) + Environment.NewLine + javaScriptSerializer.Serialize(gapRecord) + Environment.NewLine, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			bool gapOrdinalRejected = false;
+			try
+			{
+				TargetedThreadIndexer.ReadMetadataForTest(gapOrdinalPath, "断号序号", "断号序号");
+			}
+			catch (InvalidDataException ex)
+			{
+				gapOrdinalRejected = ex.Message.IndexOf("ordinal", StringComparison.OrdinalIgnoreCase) >= 0;
+			}
+			if (!missingOrdinalRejected || !gapOrdinalRejected)
+			{
+				throw new InvalidOperationException("paginated ordinal validation test failed");
+			}
+			File.Delete(missingOrdinalPath);
+			File.Delete(gapOrdinalPath);
 			sessionInfo.RelativePath = "2026/01/02/" + Path.GetFileName(text3);
 			sessionInfo.Title = "功能测试";
 			sessionInfo.Cwd = "C:\\fake-project";
@@ -599,8 +748,14 @@ internal static class Program
 			string rollbackBackup = rollbackActive + ".cct-bak-100";
 			File.Copy(rollbackActive, rollbackBackup);
 			File.WriteAllText(rollbackActive, "rollback-mutated", Encoding.UTF8);
+			string rollbackImportedId = "77777777-7777-4777-8777-777777777777";
+			string rollbackImported = Path.Combine(transactionFolder, "rollout-imported-" + rollbackImportedId + ".jsonl");
+			string rollbackUnrelated = Path.Combine(transactionFolder, "rollout-unrelated-88888888-8888-4888-8888-888888888888.jsonl");
+			File.WriteAllText(rollbackImported, "planned-import", Encoding.UTF8);
+			File.WriteAllText(rollbackUnrelated, "unrelated-new-file", Encoding.UTF8);
+			rollbackTransaction.TrackImportedSessionFiles(new string[2] { rollbackImported, rollbackUnrelated }, new string[1] { rollbackImportedId });
 			CctBackupRollbackResult rollbackResult = rollbackTransaction.RollbackAndDeleteTemporaryBackups();
-			if (rollbackResult.RestoredCount != 1 || rollbackResult.DeletedCount != 1 || File.Exists(rollbackBackup) || File.ReadAllText(rollbackActive, Encoding.UTF8) != rollbackOriginal)
+			if (rollbackResult.RestoredCount != 1 || rollbackResult.DeletedCount != 1 || rollbackResult.RemovedImportedCount != 1 || File.Exists(rollbackBackup) || File.Exists(rollbackImported) || !File.Exists(rollbackUnrelated) || File.ReadAllText(rollbackActive, Encoding.UTF8) != rollbackOriginal)
 			{
 				throw new InvalidOperationException("cct backup rollback-and-clean test failed");
 			}
@@ -616,8 +771,46 @@ internal static class Program
 			{
 				throw new InvalidOperationException("cct backup commit-and-clean test failed");
 			}
+
+			string cleanupFailureActive = Path.Combine(transactionFolder, "rollout-commit-cleanup-failure.jsonl");
+			File.WriteAllText(cleanupFailureActive, "cleanup-original", Encoding.UTF8);
+			CctBackupTransaction cleanupFailureTransaction = CctBackupTransaction.Begin(text);
+			string cleanupFailureBackup = cleanupFailureActive + ".cct-bak-102";
+			File.Copy(cleanupFailureActive, cleanupFailureBackup);
+			File.WriteAllText(cleanupFailureActive, "cleanup-current", Encoding.UTF8);
+			string stagedFailureSnapshot = string.Empty;
+			CctBackupTransaction.CommitCleanupFailureForTest = _ => true;
+			try
+			{
+				int cleanupFailureCount = cleanupFailureTransaction.CommitAndDeleteTemporaryBackups();
+				CctBackupRollbackResult postCommitRollback = cleanupFailureTransaction.RollbackAndDeleteTemporaryBackups();
+				string cleanupRoot = CctBackupMaintenance.TransactionCleanupRoot(text);
+				string[] stagedSnapshots = Directory.Exists(cleanupRoot)
+					? Directory.GetFiles(cleanupRoot, "snapshot-*.jsonl", SearchOption.AllDirectories)
+					: Array.Empty<string>();
+				if (cleanupFailureCount != 1 || File.Exists(cleanupFailureBackup) ||
+					File.ReadAllText(cleanupFailureActive, Encoding.UTF8) != "cleanup-current" ||
+					postCommitRollback.RestoredCount != 0 || postCommitRollback.DeletedCount != 0 || postCommitRollback.RemovedImportedCount != 0 ||
+					stagedSnapshots.Length != 1)
+				{
+					throw new InvalidOperationException("post-commit cleanup failure changed a completed import");
+				}
+				stagedFailureSnapshot = stagedSnapshots[0];
+			}
+			finally
+			{
+				CctBackupTransaction.CommitCleanupFailureForTest = null;
+				if (!string.IsNullOrWhiteSpace(stagedFailureSnapshot) && File.Exists(stagedFailureSnapshot))
+				{
+					string stagingDirectory = Path.GetDirectoryName(stagedFailureSnapshot);
+					File.Delete(stagedFailureSnapshot);
+					CctBackupMaintenance.DeleteEmptyTransactionCleanupDirectories(stagingDirectory);
+				}
+			}
 			File.Delete(rollbackActive);
 			File.Delete(commitActive);
+			File.Delete(cleanupFailureActive);
+			File.Delete(rollbackUnrelated);
 			Directory.Delete(transactionFolder);
 			string text7 = Path.Combine(text, "original.codexbundle");
 			string text8 = Path.Combine(text, "fresh.codexbundle");
@@ -779,6 +972,48 @@ internal static class Program
 				throw new InvalidOperationException("desktop project assignment backup or verification test failed");
 			}
 			AssertDesktopAssignmentForTest(Path.Combine(text, ".codex-global-state.json"), testThreadId, newProject, targetDesktopProjectId, "C:\\fake-project");
+			ThreadIndexMetadata historyToggle = TargetedThreadIndexer.ReadMetadataForTest(text3, "历史模式切换测试", "历史模式切换测试");
+			historyToggle.Cwd = TextHelpers.ToCodexIndexPath(newProject);
+			historyToggle.HistoryMode = CodexHistoryMode.Legacy;
+			WinSqliteMaintenance.UpsertImportedThreads(text, new ThreadIndexMetadata[1] { historyToggle });
+			if (!string.Equals(WinSqliteReader.ReadThreads(databasePath).Single(item => string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)).HistoryMode, CodexHistoryMode.Legacy, StringComparison.Ordinal))
+			{
+				throw new InvalidOperationException("history_mode paginated-to-legacy update test failed");
+			}
+			historyToggle.HistoryMode = CodexHistoryMode.Paginated;
+			WinSqliteMaintenance.UpsertImportedThreads(text, new ThreadIndexMetadata[1] { historyToggle });
+			if (!string.Equals(WinSqliteReader.ReadThreads(databasePath).Single(item => string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)).HistoryMode, CodexHistoryMode.Paginated, StringComparison.Ordinal))
+			{
+				throw new InvalidOperationException("history_mode legacy-to-paginated update test failed");
+			}
+
+			string compensationHome = Path.Combine(text, "desktop-registration-compensation");
+			Directory.CreateDirectory(compensationHome);
+			string compensationDatabase = Path.Combine(compensationHome, "state_5.sqlite");
+			WinSqliteMaintenance.CreateTargetedIndexTestDatabase(compensationDatabase);
+			ThreadIndexMetadata compensationMetadata = TargetedThreadIndexer.ReadMetadataForTest(text3, "补偿事务测试", "补偿事务测试");
+			compensationMetadata.Cwd = TextHelpers.ToCodexIndexPath(Path.Combine(compensationHome, "project"));
+			bool desktopFailureCompensated = false;
+			CodexDesktopProjectRegistry.TestOverride = delegate
+			{
+				throw new InvalidOperationException("forced desktop registration failure");
+			};
+			try
+			{
+				TargetedThreadIndexer.IndexMetadata(compensationHome, compensationMetadata);
+			}
+			catch (InvalidOperationException ex)
+			{
+				desktopFailureCompensated = ex.Message.IndexOf("恢复到导入前状态", StringComparison.Ordinal) >= 0;
+			}
+			finally
+			{
+				CodexDesktopProjectRegistry.TestOverride = null;
+			}
+			if (!desktopFailureCompensated || WinSqliteReader.ReadThreads(compensationDatabase).Count != 0 || !string.Equals(WinSqliteMaintenance.IntegrityCheck(compensationDatabase), "ok", StringComparison.OrdinalIgnoreCase))
+			{
+				throw new InvalidOperationException("desktop registration failure did not restore the pre-import SQLite index");
+			}
 			string mappedFixtures = Path.Combine(text, "mapped-fixtures");
 			Directory.CreateDirectory(mappedFixtures);
 			string secondThreadId = "22222222-2222-4222-8222-222222222222";
@@ -1013,7 +1248,7 @@ internal static class Program
 					}
 				}
 			};
-			string cascadeChildContents = javaScriptSerializer.Serialize(cascadeChildMeta) + Environment.NewLine + javaScriptSerializer.Serialize(obj2).Replace("真正的问题", "级联子代理测试") + Environment.NewLine + javaScriptSerializer.Serialize(obj3) + Environment.NewLine;
+			string cascadeChildContents = javaScriptSerializer.Serialize(cascadeChildMeta) + Environment.NewLine + javaScriptSerializer.Serialize(objContext) + Environment.NewLine + javaScriptSerializer.Serialize(obj2).Replace("真正的问题", "级联子代理测试") + Environment.NewLine + javaScriptSerializer.Serialize(obj3) + Environment.NewLine;
 			File.WriteAllText(cascadeParentPath, cascadeParentContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 			File.WriteAllText(cascadeChildPath, cascadeChildContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 			SessionInfo cascadeParent = new SessionInfo
@@ -1142,7 +1377,7 @@ internal static class Program
 				}
 			};
 			File.WriteAllText(guardedParentPath, fixtureContents.Replace(testThreadId, guardedParentId).Replace("真正的问题", "失效主对话子代理保护测试"), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-			File.WriteAllText(guardedChildPath, javaScriptSerializer.Serialize(guardedChildMeta) + Environment.NewLine + javaScriptSerializer.Serialize(obj2).Replace("真正的问题", "仍存子代理") + Environment.NewLine + javaScriptSerializer.Serialize(obj3) + Environment.NewLine, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			File.WriteAllText(guardedChildPath, javaScriptSerializer.Serialize(guardedChildMeta) + Environment.NewLine + javaScriptSerializer.Serialize(objContext) + Environment.NewLine + javaScriptSerializer.Serialize(obj2).Replace("真正的问题", "仍存子代理") + Environment.NewLine + javaScriptSerializer.Serialize(obj3) + Environment.NewLine, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 			TargetedThreadIndexer.IndexSessionFile(text, guardedParentPath, "失效主对话子代理保护测试", "失效主对话子代理保护测试");
 			TargetedThreadIndexer.IndexSessionFile(text, guardedChildPath, "仍存子代理", "仍存子代理");
 			File.Delete(guardedParentPath);
@@ -1441,11 +1676,40 @@ internal static class Program
 			{
 				throw new InvalidOperationException("project payload traversal guard test failed");
 			}
-			return "ImportModes=origin-merge+independent-copy · SamePathMap=skipped · FormalBackup=.codexchat+.codexproject+legacy · CctBak=rollback+commit+delete+legacy-trash · Lineage=origin-persist+project-scope+parent-child+fresh-every-time+ambiguity-guard · IndependentCopy=retained+delete-isolated · TargetedIndex=insert+update+two-project-cwd+native-path+visibility · DesktopProjectState=existing-remap+create+multi-project+backup+verify · BackupPrewrite=OK · BackfillUnchanged=complete · PendingRunningGuard=OK · ZstdPreflight=OK · Preview=2 messages · Trash=copy+official-delete+index-remove+desktop-catalog-remove+list+index-restore+purge+descendant-staging · PermanentDelete=official-delete+index-remove+desktop-catalog-remove+descendant-cascade · OfficialDeleteRefusal=preserves-local-data · StaleSidebar=current+log-confirmed-legacy+official-repair+ledger+live-descendant-guard+orphan-subagent-visible+exact-location+desktop-catalog-remove+desktop-cache-invalidation+completed-repair-catchup · ProjectGuard+Permanent=OK · ProjectPayload=schema5+two-targets+target-guard+combined-pack+create+inspect+restore+skip+backup+traversal-guard · ResizeGrips=8";
+			string originalLanguageCode = UiLanguage.Code;
+			try
+			{
+				UiLanguage.Initialize("en-US");
+				string[] criticalEnglishTexts =
+				{
+					UiLanguage.T("当前操作尚未完成，请等待完成后再关闭。"),
+					UiLanguage.T("操作进行中"),
+					UiLanguage.T("暂时不能关闭窗口"),
+					UiLanguage.T("当前正在写入或校验本地数据。完成后即可安全关闭。"),
+					UiLanguage.T("继续等待"),
+					UiLanguage.T("导入验证完成，已清理 2 个事务安全快照。"),
+					UiLanguage.T("现在重新打开 Codex，再打开迁入后的项目目录并实际打开对应对话。"),
+					UiLanguage.T("请完全退出并重新打开 Codex，让侧栏重新读取索引并实际打开对应对话。"),
+					UiLanguage.T("项目文件若已还原，右侧操作记录会明确列出；修复问题后可重新导入同一迁移包；也可取消“还原项目文件”或选择“跳过同名文件”，避免再次改动已还原的项目文件。"),
+					MainWindowController.BuildPaginatedImportWarning(2)
+				};
+				if (criticalEnglishTexts.Any(value => value.Any(character => character >= 0x3400 && character <= 0x9fff)))
+				{
+					throw new InvalidOperationException("critical English workflow text contains CJK characters");
+				}
+			}
+			finally
+			{
+				UiLanguage.Initialize(originalLanguageCode);
+			}
+			return "ImportModes=origin-merge+independent-copy · SamePathMap=skipped · FormalBackup=.codexchat+.codexproject+legacy · CctBak=rollback+commit+delete+legacy-trash · Lineage=origin-persist+project-scope+parent-child+fresh-every-time+ambiguity-guard · IndependentCopy=retained+delete-isolated · TargetedIndex=insert+update+two-project-cwd+native-path+visibility · HistoryMode=legacy+paginated+bidirectional-update+ordinal-gap-guard · ImportRollback=planned-new-files-only+unrelated-preserved+sqlite-compensation+commit-cleanup-failure-safe · RuntimeSelection=cli-version-probe+desktop-install-discovery · DesktopProjectState=existing-remap+create+multi-project+backup+verify · BackupPrewrite=OK · BackfillUnchanged=complete · PendingRunningGuard=OK · ZstdPreflight=OK · Preview=2 messages · Trash=copy+official-delete+index-remove+desktop-catalog-remove+list+index-restore+purge+descendant-staging · PermanentDelete=official-delete+index-remove+desktop-catalog-remove+descendant-cascade · OfficialDeleteRefusal=preserves-local-data · StaleSidebar=current+log-confirmed-legacy+official-repair+ledger+live-descendant-guard+orphan-subagent-visible+exact-location+desktop-catalog-remove+desktop-cache-invalidation+completed-repair-catchup · ProjectGuard+Permanent=OK · ProjectPayload=schema5+two-targets+target-guard+combined-pack+create+inspect+restore+skip+backup+traversal-guard · EnglishCriticalFlows=no-CJK · ResizeGrips=8";
 		}
 		finally
 		{
 			CodexAppServerThreadDeletion.TestOverride = null;
+			CodexAppServerThreadDeletion.VersionOutputOverrideForTest = null;
+			CctBackupTransaction.CommitCleanupFailureForTest = null;
+			CodexDesktopProjectRegistry.TestOverride = null;
 			ConversationIndexMaintenance.LogRootOverride = null;
 			CodexDesktopTaskCache.UserDataRootOverride = null;
 			Environment.SetEnvironmentVariable("CODEX_HOME", environmentVariable);
@@ -1778,6 +2042,7 @@ internal static class Program
 					{
 						encoder.Save(stream);
 					}
+					controller.EndBusyForTest();
 					controller.Window.Close();
 				}
 			};
@@ -1799,13 +2064,15 @@ internal static class Program
 			MainWindowController controller = new MainWindowController(cct);
 			application2.MainWindow = controller.Window;
 			bool tested = false;
-			controller.Window.ContentRendered += delegate
+			controller.Window.ContentRendered += async delegate
 			{
 				if (!tested)
 				{
 					tested = true;
+					await controller.InitialLoadTask;
 					IntPtr handle = new WindowInteropHelper(controller.Window).Handle;
 					File.WriteAllText(output, ChromeVerifier.Verify(handle), Encoding.UTF8);
+					controller.EndBusyForTest();
 					controller.Window.Close();
 				}
 			};

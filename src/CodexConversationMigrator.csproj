@@ -1,8 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
   <PropertyGroup>
+    <VersionFile>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\VERSION'))</VersionFile>
+    <CcmVersionRaw>$([System.IO.File]::ReadAllText('$(VersionFile)'))</CcmVersionRaw>
+    <CcmVersion>$(CcmVersionRaw.Trim())</CcmVersion>
     <AssemblyName>CodexConversationMigrator</AssemblyName>
     <RootNamespace>CodexConversationMigrator</RootNamespace>
-    <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
+    <GenerateAssemblyInfo>True</GenerateAssemblyInfo>
+    <AssemblyTitle>Codex Conversation Migrator</AssemblyTitle>
+    <Description>Local-first management, inspection, backup, migration, and cleanup for Codex conversations, subagents, and projects.</Description>
+    <Product>Codex Conversation Migrator</Product>
+    <Version>$(CcmVersion)</Version>
+    <AssemblyVersion>$(CcmVersion).0</AssemblyVersion>
+    <FileVersion>$(CcmVersion).0</FileVersion>
+    <InformationalVersion>$(CcmVersion)</InformationalVersion>
     <OutputType>WinExe</OutputType>
     <UseWPF>True</UseWPF>
     <UseWindowsForms>True</UseWindowsForms>
@@ -13,6 +23,12 @@
     <Deterministic>True</Deterministic>
     <PlatformTarget>AnyCPU</PlatformTarget>
     <Prefer32Bit>False</Prefer32Bit>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>portable</DebugType>
+    <DebugSymbols>True</DebugSymbols>
+    <PathMap>$(MSBuildProjectDirectory)=/_/src</PathMap>
   </PropertyGroup>
 
   <ItemGroup>
@@ -28,6 +44,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="Properties\AssemblyInfo.cs" />
     <Resource Include="assets\app-icon.ico" />
     <Page Remove="CodexConversationMigrator.xaml" />
     <None Include="CodexConversationMigrator.xaml" CopyToOutputDirectory="PreserveNewest" />

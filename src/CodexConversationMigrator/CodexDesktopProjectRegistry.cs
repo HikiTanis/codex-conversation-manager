@@ -11,6 +11,8 @@ namespace CodexConversationMigrator;
 
 internal static class CodexDesktopProjectRegistry
 {
+	internal static Func<string, IEnumerable<ThreadIndexMetadata>, DesktopProjectRegistrationResult> TestOverride { get; set; }
+
 	private sealed class ExpectedAssignment
 	{
 		public string ProjectId { get; set; }
@@ -48,6 +50,10 @@ internal static class CodexDesktopProjectRegistry
 
 	public static DesktopProjectRegistrationResult RegisterImportedThreads(string codexHome, IEnumerable<ThreadIndexMetadata> threads)
 	{
+		if (TestOverride != null)
+		{
+			return TestOverride(codexHome, threads);
+		}
 		List<ThreadIndexMetadata> mainThreads = (threads ?? Enumerable.Empty<ThreadIndexMetadata>())
 			.Where(IsDesktopMainThread)
 			.GroupBy((ThreadIndexMetadata item) => item.Id, StringComparer.OrdinalIgnoreCase)
