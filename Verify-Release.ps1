@@ -48,12 +48,15 @@ Assert-FileContains (Join-Path $repoRoot 'src\CodexConversationMigrator.xaml') $
 Assert-FileContains (Join-Path $repoRoot 'src\CodexConversationMigrator\CodexAppServerThreadDeletion.cs') $protocolVersionExpression 'Codex app-server client version source'
 Assert-FileContains (Join-Path $repoRoot 'README.md') "CodexConversationMigrator-Windows-v$Version.zip" 'English download instructions'
 Assert-FileContains (Join-Path $repoRoot 'README.zh-CN.md') "CodexConversationMigrator-Windows-v$Version.zip" 'Chinese download instructions'
+Assert-FileContains (Join-Path $repoRoot 'README.md') 'Codex CLI 0.148.0 or later' 'English Codex CLI compatibility requirement'
+Assert-FileContains (Join-Path $repoRoot 'README.zh-CN.md') 'Codex CLI 0.148.0 或更高版本' 'Chinese Codex CLI compatibility requirement'
 Assert-FileContains (Join-Path $repoRoot 'CHANGELOG.md') "## [$Version]" 'Changelog release section'
 
 $releaseNotes = Join-Path $repoRoot "docs\RELEASE_NOTES_v$Version.md"
 if (-not (Test-Path -LiteralPath $releaseNotes)) {
     throw "Release notes are missing for VERSION $($Version): $releaseNotes"
 }
+Assert-FileContains $releaseNotes 'Codex CLI 0.148.0 or later' 'Release-note Codex CLI compatibility requirement'
 
 $projectFile = Join-Path $repoRoot 'src\CodexConversationMigrator.csproj'
 Assert-FileContains $projectFile '..\VERSION' 'MSBuild VERSION source'

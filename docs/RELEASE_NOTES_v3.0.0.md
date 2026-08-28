@@ -44,7 +44,7 @@ Release assets:
 - `CodexConversationMigrator-Windows-v3.0.0.zip`
 - `SHA256SUMS.txt`
 
-The package is portable and requires 64-bit Windows 10/11 plus the .NET Framework 4.8 runtime. The verified `cct.exe` dependency is included. Conversation deletion and legacy-sidebar repair additionally require an independently callable Codex CLI; run `codex --version` before using those operations.
+The package is portable and requires 64-bit Windows 10/11 plus the .NET Framework 4.8 runtime. The verified `cct.exe` dependency is included. Inspection, backup, and import do not require a separately installed CLI. The full feature set, including conversation deletion and legacy-sidebar repair, requires Codex CLI 0.148.0 or later; the latest release is recommended. Run `codex --version` before using those operations. The compatibility baseline was exercised with isolated data on `0.148.0` and newer `0.150.0` builds; versions older than `0.148.0` are unsupported.
 
 Verify the ZIP before extracting it:
 

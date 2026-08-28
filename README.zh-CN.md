@@ -73,14 +73,14 @@ Codex Conversation Migrator 是一个本地运行的 Windows 桌面工具，用�
 
 发布包是便携版，无需安装；普通用户不需要 .NET SDK、Targeting Pack 或仓库中的 PowerShell 开发脚本。运行环境为 64 位 Windows 10/11，并需要 [.NET Framework 4.8 运行库](https://dotnet.microsoft.com/zh-cn/download/dotnet-framework/net48)。
 
-查看、备份和导入可直接使用发布包，因为包内已经包含经过校验的 `cct.exe`。**删除会话和修复旧侧边栏残留还需要系统中存在可独立调用的 Codex CLI（`codex.exe`）**；工具会自动查找常见 npm 安装路径、`PATH`、程序目录及版本化的 Codex/VS Code 扩展运行目录，并优先使用发现的较新版本。先在 PowerShell 中运行 `codex --version` 检查；如果命令不存在，请按 [OpenAI Codex CLI 文档](https://developers.openai.com/codex/cli)安装，也可以使用 npm：
+查看、备份和导入可直接使用发布包，因为包内已经包含经过校验的 `cct.exe`。**若要使用删除会话和修复旧侧边栏残留等全部功能，需要 Codex CLI 0.148.0 或更高版本；推荐安装当前最新版。** 这一最低版本要求不影响查看、备份和导入。工具会自动查找常见 npm 安装路径、`PATH`、程序目录及版本化的 Codex/VS Code 扩展运行目录，并优先使用发现的较新版本。先在 PowerShell 中运行 `codex --version` 检查；如果版本低于 `0.148.0` 或命令不存在，请按 [OpenAI Codex CLI 文档](https://developers.openai.com/codex/cli)更新或安装，也可以使用 npm：
 
 ```powershell
 npm install -g @openai/codex
 codex --version
 ```
 
-找不到 CLI 或官方删除被拒绝时，工具会终止删除并保留原会话。
+最低版本基线已在隔离数据上使用 `0.148.0` 和较新的 `0.150.0` 构建验证；低于 `0.148.0` 的版本不在支持范围内。找不到可兼容的 CLI 或官方删除被拒绝时，工具会终止删除并保留原会话。
 
 1. 从 Releases 下载 `CodexConversationMigrator-Windows-v3.0.0.zip` 和 `SHA256SUMS.txt`。
 2. 解压前先在 PowerShell 中校验 ZIP：

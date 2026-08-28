@@ -73,14 +73,14 @@ After a project is renamed or moved on the same computer, its conversations can 
 
 The release ZIP is portable: there is no installer, and end users do not need the .NET SDK, targeting pack, or repository PowerShell scripts. A 64-bit Windows 10/11 system with the [.NET Framework 4.8 runtime](https://dotnet.microsoft.com/en-us/download/dotnet-framework/net48) is required.
 
-Inspection, backup, and import work directly from the release package because the verified `cct.exe` dependency is included. **Conversation deletion and legacy-sidebar repair additionally require an independently callable Codex CLI (`codex.exe`)**. The application checks common npm installation paths, `PATH`, its own directory, and versioned Codex/VS Code extension runtimes, then prefers the newer discovered version. Run `codex --version` in PowerShell first. If unavailable, follow the [official Codex CLI documentation](https://developers.openai.com/codex/cli), or install the npm package:
+Inspection, backup, and import work directly from the release package because the verified `cct.exe` dependency is included. **The full feature set, including conversation deletion and legacy-sidebar repair, requires Codex CLI 0.148.0 or later; the latest release is recommended.** This minimum does not apply to inspection, backup, or import. The application checks common npm installation paths, `PATH`, its own directory, and versioned Codex/VS Code extension runtimes, then prefers the newer discovered version. Run `codex --version` in PowerShell first. If it reports a version older than `0.148.0`, or if the command is unavailable, update or install the CLI using the [official Codex CLI documentation](https://developers.openai.com/codex/cli), or install the npm package:
 
 ```powershell
 npm install -g @openai/codex
 codex --version
 ```
 
-If the CLI cannot be found or official deletion is rejected, the application stops and preserves the original conversation.
+The compatibility baseline was exercised with isolated data on `0.148.0` and newer `0.150.0` builds; versions older than `0.148.0` are unsupported. If a compatible CLI cannot be found or official deletion is rejected, the application stops and preserves the original conversation.
 
 1. Download `CodexConversationMigrator-Windows-v3.0.0.zip` and `SHA256SUMS.txt` from Releases.
 2. Verify the ZIP before extracting it:

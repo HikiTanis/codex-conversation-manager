@@ -1,5 +1,7 @@
 # Support
 
+The portable package supports 64-bit Windows 10/11 with the .NET Framework 4.8 runtime. Inspection, backup, and import use the bundled `cct.exe`. Conversation deletion and legacy-sidebar repair require Codex CLI 0.148.0 or later; the latest CLI release is recommended.
+
 Before opening an issue:
 
 1. Confirm you are using the latest release.
