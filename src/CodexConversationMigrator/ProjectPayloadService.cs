@@ -11,6 +11,16 @@ namespace CodexConversationMigrator;
 
 internal static class ProjectPayloadService
 {
+	private const int MaximumArchiveEntries = 50000;
+
+	private const long MaximumSingleEntryBytes = 32L * 1024L * 1024L * 1024L;
+
+	private const long MaximumExpandedBytes = 128L * 1024L * 1024L * 1024L;
+
+	private const long CompressionRatioCheckThresholdBytes = 16L * 1024L * 1024L;
+
+	private const long MaximumCompressionRatio = 10000L;
+
 	private sealed class SourceFile
 	{
 		public string FullPath { get; set; }
@@ -77,14 +87,10 @@ internal static class ProjectPayloadService
 				source.CopyTo(destination);
 			}
 		}
-		int archivedFileCount;
-		long archivedBytes;
-		using (ZipArchive verification = ZipFile.OpenRead(archivePath))
-		{
-			List<ZipArchiveEntry> archivedFiles = verification.Entries.Where((ZipArchiveEntry entry) => !string.IsNullOrEmpty(entry.Name)).ToList();
-			archivedFileCount = archivedFiles.Count;
-			archivedBytes = archivedFiles.Sum((ZipArchiveEntry entry) => entry.Length);
-		}
+		List<ArchiveItem> archivedItems = ReadAndValidateArchive(archivePath, sourceRoot, verifyContent: false);
+		List<ArchiveItem> archivedFiles = archivedItems.Where((ArchiveItem item) => !item.IsDirectory).ToList();
+		int archivedFileCount = archivedFiles.Count;
+		long archivedBytes = archivedFiles.Sum((ArchiveItem item) => item.Length);
 		return new ProjectPayloadInfo
 		{
 			archive_file = Path.GetFileName(archivePath),
@@ -163,7 +169,9 @@ internal static class ProjectPayloadService
 	public static ProjectRestoreResult RestoreArchive(string archivePath, ProjectPayloadInfo payload, string targetDirectory, ProjectFileConflictMode conflictMode)
 	{
 		ProjectRestorePlan plan = InspectArchive(archivePath, payload, targetDirectory, conflictMode);
-		string stageRoot = Path.Combine(Path.GetTempPath(), "codex-project-stage-" + Guid.NewGuid().ToString("N"));
+		string temporaryRoot = Path.GetTempPath();
+		CheckTemporaryDiskSpace(temporaryRoot, plan.UncompressedBytes);
+		string stageRoot = Path.Combine(temporaryRoot, "codex-project-stage-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(stageRoot);
 		string backupPath = string.Empty;
 		HashSet<string> backedExistingFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -289,6 +297,7 @@ internal static class ProjectPayloadService
 	private static SourceSnapshot ScanSource(string sourceRoot, string excludedOutputPath)
 	{
 		SourceSnapshot snapshot = new SourceSnapshot { RootPath = sourceRoot };
+		long totalBytes = 0L;
 		string excluded = NormalizeOptionalPath(excludedOutputPath);
 		Stack<string> pending = new Stack<string>();
 		pending.Push(sourceRoot);
@@ -305,6 +314,7 @@ internal static class ProjectPayloadService
 					continue;
 				}
 				string relative = RelativeFromRoot(sourceRoot, directory);
+				EnsureSourceEntryCapacity(snapshot);
 				snapshot.Directories.Add(relative);
 				pending.Push(directory);
 			}
@@ -322,6 +332,16 @@ internal static class ProjectPayloadService
 					continue;
 				}
 				FileInfo info = new FileInfo(filePath);
+				if (info.Length < 0L || info.Length > MaximumSingleEntryBytes)
+				{
+					throw new InvalidOperationException("项目中单个文件超过 32 GB，无法加入备份：\n" + filePath);
+				}
+				if (totalBytes > MaximumExpandedBytes - info.Length)
+				{
+					throw new InvalidOperationException("项目文件总大小超过 128 GB，无法创建备份。");
+				}
+				EnsureSourceEntryCapacity(snapshot);
+				totalBytes += info.Length;
 				snapshot.Files.Add(new SourceFile
 				{
 					FullPath = filePath,
@@ -336,16 +356,52 @@ internal static class ProjectPayloadService
 		return snapshot;
 	}
 
+	private static void EnsureSourceEntryCapacity(SourceSnapshot snapshot)
+	{
+		if ((long)snapshot.Directories.Count + snapshot.Files.Count >= MaximumArchiveEntries)
+		{
+			throw new InvalidOperationException("项目文件和目录总数超过 50000 个，无法创建备份。");
+		}
+	}
+
 	private static List<ArchiveItem> ReadAndValidateArchive(string archivePath, string targetRoot, bool verifyContent)
 	{
+		using ZipArchive archive = ZipFile.OpenRead(archivePath);
+		return ReadAndValidateArchive(archive, targetRoot, verifyContent);
+	}
+
+	private static List<ArchiveItem> ReadAndValidateArchive(ZipArchive archive, string targetRoot, bool verifyContent)
+	{
+		if (archive.Entries.Count > MaximumArchiveEntries)
+		{
+			throw new InvalidDataException("项目载荷文件和目录数量超过 50000 个，已停止读取。");
+		}
 		List<ArchiveItem> items = new List<ArchiveItem>();
 		HashSet<string> names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-		using ZipArchive archive = ZipFile.OpenRead(archivePath);
+		long declaredBytes = 0L;
+		long actualBytes = 0L;
 		foreach (ZipArchiveEntry entry in archive.Entries)
 		{
 			RejectSymbolicLink(entry);
 			bool isDirectory = string.IsNullOrEmpty(entry.Name);
 			string relative = NormalizeRelativeArchivePath(entry.FullName, isDirectory);
+			if (isDirectory && entry.Length != 0L)
+			{
+				throw new InvalidDataException("项目载荷目录条目包含数据，已拒绝读取：" + entry.FullName);
+			}
+			if (entry.Length < 0L || entry.CompressedLength < 0L || (!isDirectory && entry.Length > MaximumSingleEntryBytes))
+			{
+				throw new InvalidDataException("项目载荷单个文件展开大小超过 32 GB，已停止读取：" + entry.FullName);
+			}
+			if (declaredBytes > MaximumExpandedBytes - entry.Length)
+			{
+				throw new InvalidDataException("项目载荷展开大小无效或超过 128 GB，已停止读取。");
+			}
+			declaredBytes += entry.Length;
+			if (!isDirectory && HasAbnormalCompressionRatio(entry))
+			{
+				throw new InvalidDataException("项目载荷包含异常压缩比文件，已停止读取：" + entry.FullName);
+			}
 			if (!names.Add(relative))
 			{
 				throw new InvalidDataException("项目载荷包含重复路径：" + relative);
@@ -353,11 +409,7 @@ internal static class ProjectPayloadService
 			ResolveDestination(targetRoot, relative);
 			if (verifyContent && !isDirectory)
 			{
-				using Stream stream = entry.Open();
-				byte[] buffer = new byte[81920];
-				while (stream.Read(buffer, 0, buffer.Length) > 0)
-				{
-				}
+				VerifyEntryContent(entry, ref actualBytes);
 			}
 			items.Add(new ArchiveItem
 			{
@@ -367,8 +419,54 @@ internal static class ProjectPayloadService
 				LastWriteTime = entry.LastWriteTime
 			});
 		}
+		if (verifyContent && actualBytes != declaredBytes)
+		{
+			throw new InvalidDataException("项目载荷实际展开大小与压缩包记录不一致，已停止读取。");
+		}
 		ValidateArchiveStructure(items);
 		return items;
+	}
+
+	private static bool HasAbnormalCompressionRatio(ZipArchiveEntry entry)
+	{
+		if (entry.Length < CompressionRatioCheckThresholdBytes)
+		{
+			return false;
+		}
+		if (entry.CompressedLength == 0L)
+		{
+			return true;
+		}
+		if (entry.CompressedLength > entry.Length || entry.CompressedLength > long.MaxValue / MaximumCompressionRatio)
+		{
+			return false;
+		}
+		return entry.Length > entry.CompressedLength * MaximumCompressionRatio;
+	}
+
+	private static void VerifyEntryContent(ZipArchiveEntry entry, ref long totalRead)
+	{
+		long entryRead = 0L;
+		using Stream stream = entry.Open();
+		byte[] buffer = new byte[81920];
+		while (true)
+		{
+			int read = stream.Read(buffer, 0, buffer.Length);
+			if (read == 0)
+			{
+				break;
+			}
+			if (entryRead > entry.Length - read || entryRead > MaximumSingleEntryBytes - read || totalRead > MaximumExpandedBytes - read)
+			{
+				throw new InvalidDataException("项目载荷条目实际展开长度超过限制，已停止读取：" + entry.FullName);
+			}
+			entryRead += read;
+			totalRead += read;
+		}
+		if (entryRead != entry.Length)
+		{
+			throw new InvalidDataException("项目载荷条目读取不完整：" + entry.FullName);
+		}
 	}
 
 	private static void ValidateArchiveStructure(IList<ArchiveItem> items)
@@ -390,8 +488,10 @@ internal static class ProjectPayloadService
 
 	private static void ExtractToStage(string archivePath, string stageRoot)
 	{
-		List<ArchiveItem> items = ReadAndValidateArchive(archivePath, stageRoot, verifyContent: false);
 		using ZipArchive archive = ZipFile.OpenRead(archivePath);
+		List<ArchiveItem> items = ReadAndValidateArchive(archive, stageRoot, verifyContent: false);
+		long totalExpected = items.Where((ArchiveItem item) => !item.IsDirectory).Sum((ArchiveItem item) => item.Length);
+		long totalWritten = 0L;
 		for (int index = 0; index < archive.Entries.Count; index++)
 		{
 			ZipArchiveEntry entry = archive.Entries[index];
@@ -400,15 +500,56 @@ internal static class ProjectPayloadService
 			if (item.IsDirectory)
 			{
 				Directory.CreateDirectory(destination);
+				EnsureNoNestedReparsePoint(stageRoot, destination);
 				continue;
 			}
-			Directory.CreateDirectory(Path.GetDirectoryName(destination));
+			string parent = Path.GetDirectoryName(destination);
+			EnsureNoNestedReparsePoint(stageRoot, parent);
+			Directory.CreateDirectory(parent);
+			EnsureNoNestedReparsePoint(stageRoot, parent);
+			ExtractEntryCounted(entry, destination, item.Length, item.LastWriteTime, ref totalWritten);
+		}
+		if (totalWritten != totalExpected)
+		{
+			throw new InvalidDataException("项目载荷实际展开大小与压缩包记录不一致，已停止读取。");
+		}
+	}
+
+	private static void ExtractEntryCounted(ZipArchiveEntry entry, string destination, long expectedLength, DateTimeOffset lastWriteTime, ref long totalWritten)
+	{
+		long entryWritten = 0L;
+		try
+		{
 			using (Stream source = entry.Open())
 			using (FileStream output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None))
 			{
-				source.CopyTo(output);
+				byte[] buffer = new byte[81920];
+				while (true)
+				{
+					int read = source.Read(buffer, 0, buffer.Length);
+					if (read == 0)
+					{
+						break;
+					}
+					if (entryWritten > expectedLength - read || entryWritten > MaximumSingleEntryBytes - read || totalWritten > MaximumExpandedBytes - read)
+					{
+						throw new InvalidDataException("项目载荷条目实际展开长度超过限制，已停止解压：" + entry.FullName);
+					}
+					entryWritten += read;
+					totalWritten += read;
+					output.Write(buffer, 0, read);
+				}
 			}
-			File.SetLastWriteTimeUtc(destination, item.LastWriteTime.UtcDateTime);
+			if (entryWritten != expectedLength)
+			{
+				throw new InvalidDataException("项目载荷条目读取不完整：" + entry.FullName);
+			}
+			File.SetLastWriteTimeUtc(destination, lastWriteTime.UtcDateTime);
+		}
+		catch
+		{
+			TryDeleteFile(destination);
+			throw;
 		}
 	}
 
@@ -447,7 +588,7 @@ internal static class ProjectPayloadService
 				};
 				ZipArchiveEntry infoEntry = backup.CreateEntry("__codex_migrator_restore_info__.json", CompressionLevel.Optimal);
 				using StreamWriter writer = new StreamWriter(infoEntry.Open(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-				writer.Write(CctRunner.NewSerializer().Serialize(restoreInfo));
+				writer.Write(JsonSerialization.NewSerializer().Serialize(restoreInfo));
 			}
 			File.Move(temporaryBackup, backupPath);
 			return backupPath;
@@ -476,8 +617,11 @@ internal static class ProjectPayloadService
 			File.Copy(source, temporary, overwrite: false);
 			if (overwrite)
 			{
-				File.Copy(temporary, destination, overwrite: true);
-				File.Delete(temporary);
+				if (!File.Exists(destination))
+				{
+					throw new IOException("准备覆盖的目标文件在还原期间消失，已停止写入：\n" + destination);
+				}
+				File.Replace(temporary, destination, null, ignoreMetadataErrors: true);
 			}
 			else
 			{
@@ -577,7 +721,10 @@ internal static class ProjectPayloadService
 		{
 			throw new InvalidDataException("迁移包的项目载荷清单不完整。");
 		}
-		if (payload.file_count < 0 || payload.directory_count < 0 || payload.uncompressed_bytes < 0L)
+		if (payload.file_count < 0 || payload.directory_count < 0 || payload.uncompressed_bytes < 0L ||
+			payload.file_count > MaximumArchiveEntries || payload.directory_count > MaximumArchiveEntries ||
+			(long)payload.file_count + payload.directory_count > MaximumArchiveEntries ||
+			payload.uncompressed_bytes > MaximumExpandedBytes)
 		{
 			throw new InvalidDataException("迁移包的项目载荷统计无效。");
 		}
@@ -585,6 +732,10 @@ internal static class ProjectPayloadService
 
 	private static string NormalizeRelativeArchivePath(string value, bool isDirectory)
 	{
+		if (string.IsNullOrWhiteSpace(value) || value.IndexOf('\0') >= 0)
+		{
+			throw new InvalidDataException("项目载荷包含无效路径：" + value);
+		}
 		string normalized = (value ?? string.Empty).Replace('/', Path.DirectorySeparatorChar).TrimEnd(Path.DirectorySeparatorChar);
 		if (string.IsNullOrWhiteSpace(normalized) || Path.IsPathRooted(normalized))
 		{
@@ -648,7 +799,8 @@ internal static class ProjectPayloadService
 	private static void RejectSymbolicLink(ZipArchiveEntry entry)
 	{
 		int unixMode = (entry.ExternalAttributes >> 16) & 61440;
-		if (unixMode == 40960)
+		bool windowsReparsePoint = (entry.ExternalAttributes & (int)FileAttributes.ReparsePoint) != 0;
+		if (unixMode == 40960 || windowsReparsePoint)
 		{
 			throw new InvalidDataException("项目载荷包含符号链接，已拒绝还原：" + entry.FullName);
 		}
@@ -672,6 +824,30 @@ internal static class ProjectPayloadService
 		}
 		catch
 		{
+		}
+	}
+
+	private static void CheckTemporaryDiskSpace(string temporaryRoot, long expandedBytes)
+	{
+		long overhead = Math.Min(268435456L, Math.Max(16777216L, expandedBytes / 20L));
+		long required = expandedBytes > long.MaxValue - overhead ? long.MaxValue : expandedBytes + overhead;
+		try
+		{
+			string root = Path.GetPathRoot(Path.GetFullPath(temporaryRoot));
+			DriveInfo drive = new DriveInfo(root);
+			if (drive.IsReady && drive.AvailableFreeSpace < required)
+			{
+				throw new IOException("系统临时盘空间不足，无法安全解压项目载荷。至少需要约 " + FormatBytes(required) + "，当前可用 " + FormatBytes(drive.AvailableFreeSpace) + "。");
+			}
+		}
+		catch (IOException)
+		{
+			throw;
+		}
+		catch
+		{
+			// Some virtual or removable volumes do not report capacity. Counted
+			// extraction and the hard expanded-size limits still apply.
 		}
 	}
 
@@ -738,6 +914,20 @@ internal static class ProjectPayloadService
 			if (fullPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase) && Directory.Exists(fullPath))
 			{
 				Directory.Delete(fullPath, recursive: true);
+			}
+		}
+		catch
+		{
+		}
+	}
+
+	private static void TryDeleteFile(string path)
+	{
+		try
+		{
+			if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+			{
+				File.Delete(path);
 			}
 		}
 		catch

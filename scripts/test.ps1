@@ -4,8 +4,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$app = Join-Path $repoRoot 'src\bin\Release\net48\CodexConversationMigrator.exe'
+$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Split-Path -Parent $scriptRoot
+$app = Join-Path $repoRoot 'src\CodexConversationMigrator\bin\Release\net48\CodexConversationMigrator.exe'
 $artifactRoot = Join-Path $repoRoot 'artifacts\test'
 $temporaryCodexHome = Join-Path ([IO.Path]::GetTempPath()) ('codex-migrator-test-home-' + [Guid]::NewGuid().ToString('N'))
 $previousCodexHome = $env:CODEX_HOME
@@ -137,6 +138,37 @@ function Initialize-TestCodexHome {
     ), $encoding)
 }
 
+function Add-LongConversationFixture {
+    param([Parameter(Mandatory = $true)][string]$CodexHome)
+
+    $encoding = [Text.UTF8Encoding]::new($false)
+    $mainId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    $mainFile = Join-Path $CodexHome "sessions\2026\08\28\rollout-2026-08-28T03-00-00-$mainId.jsonl"
+    $lines = [Collections.Generic.List[string]]::new()
+    $longBody = '超长单条消息开始' + [Environment]::NewLine + (($(
+        for ($lineNumber = 1; $lineNumber -le 450; $lineNumber++) {
+            "第 $lineNumber 行：用于验证一条消息超过窗口高度时仍可逐像素滚动查看。"
+        }
+    )) -join [Environment]::NewLine) + [Environment]::NewLine + '超长单条消息结束'
+    for ($ordinal = 3; $ordinal -le 1305; $ordinal++) {
+        $isUser = ($ordinal % 2) -eq 1
+        $message = @{
+            timestamp = ([DateTime]'2026-08-28T03:00:00Z').AddSeconds($ordinal).ToString('yyyy-MM-ddTHH:mm:ssZ')
+            type = 'response_item'
+            payload = @{
+                type = 'message'
+                role = $(if ($isUser) { 'user' } else { 'assistant' })
+                content = @(@{
+                    type = $(if ($isUser) { 'input_text' } else { 'output_text' })
+                    text = $(if ($ordinal -eq 3) { $longBody } else { "长对话消息 $ordinal" })
+                })
+            }
+        }
+        $lines.Add(($message | ConvertTo-Json -Depth 20 -Compress))
+    }
+    [IO.File]::AppendAllLines($mainFile, $lines, $encoding)
+}
+
 try {
     if (-not $NoBuild) {
         & (Join-Path $repoRoot 'build.ps1') -Configuration Release
@@ -164,6 +196,7 @@ try {
     Invoke-MigratorTest "--chrome-test `"$enChrome`" --language en-US" 'English window chrome test' $enChrome
 
     $renderCases = @(
+        [pscustomobject]@{ File = 'render-default-backup-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese default conversation-backup render test' },
         [pscustomobject]@{ File = 'render-project-backup-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese project-backup render test' },
         [pscustomobject]@{ File = 'render-conversation-backup-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese conversation-backup render test' },
         [pscustomobject]@{ File = 'render-main-selection-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese main-selection render test' },
@@ -171,12 +204,14 @@ try {
         [pscustomobject]@{ File = 'render-import-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese conversation-only import render test' },
         [pscustomobject]@{ File = 'render-import-progress-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese import-progress render test' },
         [pscustomobject]@{ File = 'render-preview-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese conversation-preview render test' },
+        [pscustomobject]@{ File = 'render-preview-responsive-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese responsive conversation-preview render test' },
         [pscustomobject]@{ File = 'render-preview-subagent-max-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese maximized subagent-preview render test' },
         [pscustomobject]@{ File = 'render-project-backup-compact-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese compact-window render test' },
         [pscustomobject]@{ File = 'render-import-project-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese import render test' },
         [pscustomobject]@{ File = 'render-import-project-compact-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese compact import render test' },
         [pscustomobject]@{ File = 'render-dialog-theme-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese dialog-theme render test' },
         [pscustomobject]@{ File = 'render-paginated-completion-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese paginated-completion render test' },
+        [pscustomobject]@{ File = 'render-default-backup-en-US.png'; Language = 'en-US'; Name = 'English default conversation-backup render test' },
         [pscustomobject]@{ File = 'render-project-backup-en-US.png'; Language = 'en-US'; Name = 'English project-backup render test' },
         [pscustomobject]@{ File = 'render-project-backup-compact-en-US.png'; Language = 'en-US'; Name = 'English compact-window render test' },
         [pscustomobject]@{ File = 'render-conversation-backup-en-US.png'; Language = 'en-US'; Name = 'English conversation-backup render test' },
@@ -184,11 +219,28 @@ try {
         [pscustomobject]@{ File = 'render-subagent-selection-en-US.png'; Language = 'en-US'; Name = 'English subagent-selection render test' },
         [pscustomobject]@{ File = 'render-import-en-US.png'; Language = 'en-US'; Name = 'English conversation-only import render test' },
         [pscustomobject]@{ File = 'render-preview-en-US.png'; Language = 'en-US'; Name = 'English conversation-preview render test' },
+        [pscustomobject]@{ File = 'render-preview-responsive-en-US.png'; Language = 'en-US'; Name = 'English responsive conversation-preview render test' },
         [pscustomobject]@{ File = 'render-import-project-en-US.png'; Language = 'en-US'; Name = 'English import render test' },
         [pscustomobject]@{ File = 'render-dialog-theme-en-US.png'; Language = 'en-US'; Name = 'English dialog-theme render test' },
         [pscustomobject]@{ File = 'render-paginated-completion-en-US.png'; Language = 'en-US'; Name = 'English paginated-completion render test' }
     )
     foreach ($renderCase in $renderCases) {
+        $renderPath = Join-Path $artifactRoot $renderCase.File
+        Invoke-MigratorTest "--render-test `"$renderPath`" --language $($renderCase.Language)" $renderCase.Name $renderPath
+        $png = [IO.File]::ReadAllBytes($renderPath)
+        if ($png.Length -lt 8 -or $png[0] -ne 137 -or $png[1] -ne 80 -or $png[2] -ne 78 -or $png[3] -ne 71) {
+            throw "$($renderCase.Name) did not create a valid PNG."
+        }
+    }
+
+    Add-LongConversationFixture -CodexHome $temporaryCodexHome
+    $longRenderCases = @(
+        [pscustomobject]@{ File = 'render-preview-long-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese complete long-conversation render test' },
+        [pscustomobject]@{ File = 'render-preview-long-rail-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese user-message navigation rail render test' },
+        [pscustomobject]@{ File = 'render-preview-long-en-US.png'; Language = 'en-US'; Name = 'English complete long-conversation render test' },
+        [pscustomobject]@{ File = 'render-preview-long-rail-en-US.png'; Language = 'en-US'; Name = 'English user-message navigation rail render test' }
+    )
+    foreach ($renderCase in $longRenderCases) {
         $renderPath = Join-Path $artifactRoot $renderCase.File
         Invoke-MigratorTest "--render-test `"$renderPath`" --language $($renderCase.Language)" $renderCase.Name $renderPath
         $png = [IO.File]::ReadAllBytes($renderPath)

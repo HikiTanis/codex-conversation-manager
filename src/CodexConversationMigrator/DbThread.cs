@@ -30,11 +30,10 @@ internal sealed class DbThread
 	{
 		get
 		{
-			if (!string.Equals(ThreadSource, "subagent", StringComparison.OrdinalIgnoreCase))
-			{
-				return (Source ?? string.Empty).IndexOf("\"subagent\"", StringComparison.OrdinalIgnoreCase) >= 0;
-			}
-			return true;
+			string source = (Source ?? string.Empty).Trim();
+			return string.Equals(ThreadSource, "subagent", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(source, "subagent", StringComparison.OrdinalIgnoreCase) ||
+				source.IndexOf("\"subagent\"", StringComparison.OrdinalIgnoreCase) >= 0;
 		}
 	}
 }

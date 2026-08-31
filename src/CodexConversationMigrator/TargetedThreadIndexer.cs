@@ -40,16 +40,109 @@ internal static class TargetedThreadIndexer
 		foreach (string path in array)
 		{
 			string path2 = Path.Combine(codexHome, path);
-			if (!Directory.Exists(path2))
+			foreach (string item in EnumerateSessionFilesSafely(path2))
 			{
-				continue;
-			}
-			foreach (string item in Directory.EnumerateFiles(path2, "*.jsonl", SearchOption.AllDirectories))
-			{
-				hashSet.Add(Path.GetFullPath(item));
+				hashSet.Add(item);
 			}
 		}
 		return hashSet;
+	}
+
+	private static IEnumerable<string> EnumerateSessionFilesSafely(string root)
+	{
+		string fullRoot;
+		try
+		{
+			fullRoot = Path.GetFullPath(root);
+			FileAttributes rootAttributes = File.GetAttributes(fullRoot);
+			if ((rootAttributes & FileAttributes.Directory) == 0 || (rootAttributes & FileAttributes.ReparsePoint) != 0)
+			{
+				yield break;
+			}
+		}
+		catch (IOException)
+		{
+			yield break;
+		}
+		catch (UnauthorizedAccessException)
+		{
+			yield break;
+		}
+
+		Stack<string> pending = new Stack<string>();
+		pending.Push(fullRoot);
+		while (pending.Count > 0)
+		{
+			string directory = pending.Pop();
+			string[] files;
+			try
+			{
+				files = Directory.GetFiles(directory, "*.jsonl", SearchOption.TopDirectoryOnly);
+			}
+			catch (IOException)
+			{
+				files = Array.Empty<string>();
+			}
+			catch (UnauthorizedAccessException)
+			{
+				files = Array.Empty<string>();
+			}
+
+			foreach (string file in files)
+			{
+				string fullPath;
+				try
+				{
+					FileAttributes attributes = File.GetAttributes(file);
+					if ((attributes & FileAttributes.Directory) != 0 || (attributes & FileAttributes.ReparsePoint) != 0)
+					{
+						continue;
+					}
+					fullPath = Path.GetFullPath(file);
+				}
+				catch (IOException)
+				{
+					continue;
+				}
+				catch (UnauthorizedAccessException)
+				{
+					continue;
+				}
+				yield return fullPath;
+			}
+
+			string[] directories;
+			try
+			{
+				directories = Directory.GetDirectories(directory, "*", SearchOption.TopDirectoryOnly);
+			}
+			catch (IOException)
+			{
+				directories = Array.Empty<string>();
+			}
+			catch (UnauthorizedAccessException)
+			{
+				directories = Array.Empty<string>();
+			}
+
+			foreach (string child in directories)
+			{
+				try
+				{
+					FileAttributes attributes = File.GetAttributes(child);
+					if ((attributes & FileAttributes.Directory) != 0 && (attributes & FileAttributes.ReparsePoint) == 0)
+					{
+						pending.Push(child);
+					}
+				}
+				catch (IOException)
+				{
+				}
+				catch (UnauthorizedAccessException)
+				{
+				}
+			}
+		}
 	}
 
 	public static void ValidateBundles(IEnumerable<string> bundlePaths)
@@ -141,7 +234,7 @@ internal static class TargetedThreadIndexer
 				string text3 = hashSet.FirstOrDefault((string path) => Path.GetFileName(path).IndexOf(descriptor.Id, StringComparison.OrdinalIgnoreCase) >= 0);
 				if (string.IsNullOrWhiteSpace(text3))
 				{
-					throw new FileNotFoundException("cct 返回成功，但没有找到导入后的会话文件：" + descriptor.Id);
+					throw new FileNotFoundException("原生导入完成，但没有找到导入后的会话文件：" + descriptor.Id);
 				}
 				dictionary[text3] = descriptor;
 			}
@@ -223,7 +316,7 @@ internal static class TargetedThreadIndexer
 		{
 			return candidates[0];
 		}
-		string firstUser = FindFirstUserMessage(path, CctRunner.NewSerializer());
+		string firstUser = FindFirstUserMessage(path, JsonSerialization.NewSerializer());
 		if (!string.IsNullOrWhiteSpace(firstUser))
 		{
 			List<BundleDescriptor> list = candidates.Where((BundleDescriptor item) => string.Equals(StripContext(item.FirstUserMessage), firstUser, StringComparison.Ordinal)).ToList();
@@ -257,12 +350,12 @@ internal static class TargetedThreadIndexer
 			{
 				throw new InvalidDataException("会话包缺少 manifest.json。");
 			}
-			CctBundleManifest cctBundleManifest;
+			BundleManifest bundleManifest;
 			using (StreamReader streamReader = new StreamReader(entry.Open(), Encoding.UTF8))
 			{
-				cctBundleManifest = CctRunner.NewSerializer().Deserialize<CctBundleManifest>(streamReader.ReadToEnd());
+				bundleManifest = JsonSerialization.NewSerializer().Deserialize<BundleManifest>(streamReader.ReadToEnd());
 			}
-			foreach (CctBundleSession item2 in cctBundleManifest.sessions ?? new List<CctBundleSession>())
+			foreach (BundleSession item2 in bundleManifest.sessions ?? new List<BundleSession>())
 			{
 				if (item2 != null && !string.IsNullOrWhiteSpace(item2.thread_id))
 				{
@@ -330,7 +423,7 @@ internal static class TargetedThreadIndexer
 		{
 			throw new InvalidDataException("会话文件缺少 session_meta：" + path);
 		}
-		JavaScriptSerializer javaScriptSerializer = CctRunner.NewSerializer();
+		JavaScriptSerializer javaScriptSerializer = JsonSerialization.NewSerializer();
 		object value;
 		Dictionary<string, object> dictionary = ((javaScriptSerializer.DeserializeObject(text) is Dictionary<string, object> dictionary2 && dictionary2.TryGetValue("payload", out value)) ? (value as Dictionary<string, object>) : null);
 		if (dictionary == null)

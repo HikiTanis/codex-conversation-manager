@@ -6,48 +6,48 @@ All notable changes are documented here. The project follows semantic versioning
 
 No unreleased changes are documented yet.
 
-## [3.0.0] - 2026-08-28
+## [1.0.0] - 2026-08-31
 
-First public release of the expanded conversation-and-project management application.
+### Initial release
 
-### Added
+- Unified local management for Codex projects, main conversations, and subagent conversations, including time, size, Thread ID, actual path, and per-project storage totals.
+- Project-path reassociation after a project is renamed, moved, or copied.
+- Multi-conversation `.codexchat` backups and multi-project `.codexproject` backups containing project files plus linked conversations.
+- Smart merge by original lineage and independent-copy import with fresh Thread IDs and separate conversation files.
+- Project restoration to user-selected folders while conversations remain in the destination Codex data directory.
+- App trash, restoration, permanent deletion, optional related-project handling, and evidence-backed stale-sidebar repair.
+- Simplified Chinese and English interfaces with consistent main/subagent selection and deletion controls.
 
-- Unified local management for Codex projects, main conversations, and subagent conversations.
-- Project-path reassociation for projects renamed or moved on the same computer.
-- Per-project storage totals and per-conversation latest update time, file size, Thread ID, and actual path.
-- Separate main and subagent views with consistent select-all, clear-all, and delete-selected controls.
-- Read-only viewing of main and subagent conversation content.
-- Multi-project `.codexproject` backups containing ordinary project files, empty directories, main conversations, and subagent conversations.
-- Cross-project `.codexchat` backups containing selected main conversations without project files.
-- Smart merge by original lineage within the destination project, supporting later imports and round-trip migration between computers.
-- Independent-copy mode with fresh Thread IDs and separate conversation files.
-- Project restoration to user-selected folders while conversations remain in the local Codex data directory.
-- App trash, restoration, permanent conversation deletion, and optional related-project processing.
-- Project-folder actions using the Windows Recycle Bin or explicit permanent deletion.
-- Immediate Simplified Chinese and English switching with a remembered preference.
-- Transactional conversation deletion across rollout files, the SQLite thread index, subagent edges, and Codex desktop thread state.
-- Thread-index and desktop-project re-registration when restoring a conversation from the app trash.
-- Detection and guided cleanup of orphaned subagents and older partial-deletion sidebar records.
-- A single authoritative `VERSION` file, deterministic release ZIP creation, version/package verification, checksums, CI, and tag-driven GitHub Releases.
-- Automated Chinese and English functional, window-chrome, selection, import-layout, backup-layout, and dialog-theme render tests.
+### Changed
 
-### Changed since 2.2.0
+- Replaced the external conversation-transfer runtime with a built-in native engine for session inspection, formal backup, and import.
+- Reduced the portable release package and removed the build-time download and runtime bundling of a separate transfer executable.
+- Kept Codex CLI integration only for conversation deletion and stale-sidebar repair. Those operations require Codex CLI 0.148.0 or later; the latest release is recommended.
+- Standardized new formal backups on `.codexchat` and `.codexproject`; `.codexpack` and `.codexbundle` remain legacy import-only formats.
+- Updated source builds to restore pinned .NET Framework 4.8 reference assemblies from NuGet, so developers need Windows, .NET SDK 8.x, and PowerShell 5.1 or newer but not a separately installed Targeting Pack.
+- Renamed current import safety snapshots and maintenance paths to application-owned native transaction terminology while retaining one-version cleanup compatibility for orphaned legacy snapshots.
 
-- Repositioned the application from a conversation mover to a conversation-and-project management, backup, and migration tool.
-- Reorganized the interface around backup, restore, inspection, and management workflows.
-- Replaced ambiguous new backup files with `.codexchat` and `.codexproject`; legacy formats remain import-compatible.
-- Improved import responsiveness, same-path handling, targeted Codex index registration, desktop project association, and failure rollback for both current and legacy package flows.
-- Ensured independently copied conversations use separate files and IDs, so deleting one copy does not remove another.
-- Unified destructive-action dialogs and made recoverable versus permanent operations explicit.
-- Separated subagent records from main conversations so large historical execution contexts can be reviewed and cleaned selectively.
-- Routed supported deletion and stale-sidebar repair through Codex's official `thread/delete` interface before local cleanup.
-- Preserved and verified Codex `legacy` and `paginated` history modes during import, including continuous ordinal and turn-context checks for paginated records.
+### Improved
+
+- Backups now read every rollout from one stable temporary snapshot, validate embedded IDs, hashes, and duplicate sources, and replace an existing output package only after successful completion.
+- Imports validate the manifest, checksums, source working directory, archive paths, expanded size, compression ratio, duplicate entries, and available temporary storage before modifying Codex data.
+- Nested project payloads now use the same bounded validation and counted extraction model, and project-file overwrites use atomic replacement.
+- Smart merge now compares normalized metadata and lineage within the destination project, avoiding false divergence caused only by rewritten working-directory JSON formatting.
+- Independent-copy import preserves parent-subagent relationships while assigning fresh Thread IDs and separate session files.
+- Session discovery now combines regular and archived session files with a defensive SQLite index overlay, ignores reparse points, and refuses mismatched path-index records.
+- Scan, backup, and import work run off the UI thread to keep the desktop interface responsive during large operations.
 
 ### Fixed
 
-- Same-source and destination project mappings no longer pass an invalid identical `--map-cwd` argument.
-- Corrected `history_mode` during targeted index updates and reject structurally incomplete paginated histories before indexing; full-history support remains dependent on the destination Codex version.
-- Independently copied conversations no longer share Thread IDs or session files with their source.
-- Main-conversation deletion now discloses and safely handles descendant subagents before Codex applies its cascade.
-- Previously deleted conversations can be removed from stale desktop sidebar caches using exact, evidence-backed Thread IDs.
-- Window title bars, dialog controls, taskbar icon behavior, and clipped import controls were made consistent.
+- Normalized legacy rollout filenames whose filename GUID did not match the embedded Thread ID, preventing Codex's “rollout path does not match thread id” error after import.
+- Prevented bundle metadata from authorizing a source-project mapping when the actual embedded conversation working directory does not match it.
+- Preserved valid conversation previews when optional metadata payloads are missing and recognized subagent sources and parent relations consistently.
+- Rejected unsupported compressed rollouts instead of producing a formal backup that could not be restored.
+
+### Known limitation
+
+- `.jsonl.zst` sessions can currently be listed from index metadata, including path and size, but compressed content cannot yet be previewed, formally backed up, or imported.
+
+## Internal pre-release milestone
+
+Earlier internal development builds were not public releases. Their completed work is included in the 1.0.0 entry above.

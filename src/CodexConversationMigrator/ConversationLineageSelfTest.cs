@@ -27,6 +27,8 @@ internal static class ConversationLineageSelfTest
 			SessionInfo child = CreateSession(sourceFiles, childId, mainId, sourceProject, true);
 			string sourceBundle = Path.Combine(root, "source.codexbundle");
 			ExactBundleWriter.CreateBundle(new[] { main, child }, sourceBundle, null);
+			AssertCorruptBundleRejected(sourceBundle, Path.Combine(root, "corrupt.codexbundle"));
+			AssertUnsafeOuterPackagesRejected(root);
 
 			string freshOne = Path.Combine(root, "fresh-one.codexbundle");
 			string freshTwo = Path.Combine(root, "fresh-two.codexbundle");
@@ -38,7 +40,7 @@ internal static class ConversationLineageSelfTest
 			{
 				throw new InvalidOperationException("independent copy did not generate a fresh ID set on every run");
 			}
-		AssertParentChildRewrite(freshOne, mainId, childId, first.IdMap[mainId], first.IdMap[childId]);
+			AssertParentChildRewrite(freshOne, mainId, childId, first.IdMap[mainId], first.IdMap[childId]);
 
 			string plannerHome = Path.Combine(root, "planner-home");
 			Environment.SetEnvironmentVariable("CODEX_HOME", plannerHome);
@@ -85,6 +87,95 @@ internal static class ConversationLineageSelfTest
 		{
 			Environment.SetEnvironmentVariable("CODEX_HOME", originalHome);
 		}
+	}
+
+	private static void AssertCorruptBundleRejected(string sourceBundle, string corruptBundle)
+	{
+		bool tampered = false;
+		using (ZipArchive source = ZipFile.OpenRead(sourceBundle))
+		using (ZipArchive destination = ZipFile.Open(corruptBundle, ZipArchiveMode.Create))
+		{
+			foreach (ZipArchiveEntry sourceEntry in source.Entries)
+			{
+				ZipArchiveEntry destinationEntry = destination.CreateEntry(sourceEntry.FullName, CompressionLevel.Optimal);
+				using Stream input = sourceEntry.Open();
+				using Stream output = destinationEntry.Open();
+				input.CopyTo(output);
+				if (!tampered && !string.IsNullOrEmpty(sourceEntry.Name) &&
+					!string.Equals(sourceEntry.FullName, "manifest.json", StringComparison.OrdinalIgnoreCase) &&
+					!string.Equals(sourceEntry.FullName, "checksums.json", StringComparison.OrdinalIgnoreCase))
+				{
+					output.WriteByte((byte)' ');
+					tampered = true;
+				}
+			}
+		}
+		if (!tampered)
+		{
+			throw new InvalidOperationException("corrupt bundle test did not find a session entry");
+		}
+
+		bool nativeRejected = false;
+		try
+		{
+			NativeBundleImporter.PreflightBundle(corruptBundle, null, null);
+		}
+		catch (InvalidDataException)
+		{
+			nativeRejected = true;
+		}
+		bool rewriteRejected = false;
+		try
+		{
+			BundleFreshIdRewriter.ReadLineages(corruptBundle);
+		}
+		catch (InvalidDataException)
+		{
+			rewriteRejected = true;
+		}
+		if (!nativeRejected || !rewriteRejected)
+		{
+			throw new InvalidOperationException("corrupt checksum bundle was not rejected before import planning");
+		}
+	}
+
+	private static void AssertUnsafeOuterPackagesRejected(string root)
+	{
+		string duplicatePackage = Path.Combine(root, "duplicate-manifest.codexchat");
+		using (ZipArchive archive = ZipFile.Open(duplicatePackage, ZipArchiveMode.Create))
+		{
+			WriteZipText(archive.CreateEntry("manifest.json"), "{}");
+			WriteZipText(archive.CreateEntry("manifest.json"), "{}");
+		}
+		string traversalPackage = Path.Combine(root, "traversal.codexproject");
+		using (ZipArchive archive = ZipFile.Open(traversalPackage, ZipArchiveMode.Create))
+		{
+			WriteZipText(archive.CreateEntry("manifest.json"), "{}");
+			WriteZipText(archive.CreateEntry("../escape.txt"), "blocked");
+		}
+		if (!OuterPackageRejected(duplicatePackage) || !OuterPackageRejected(traversalPackage))
+		{
+			throw new InvalidOperationException("unsafe outer package was not rejected");
+		}
+	}
+
+	private static bool OuterPackageRejected(string path)
+	{
+		try
+		{
+			OuterPackageArchive.ReadManifest(path);
+			return false;
+		}
+		catch (InvalidDataException)
+		{
+			return true;
+		}
+	}
+
+	private static void WriteZipText(ZipArchiveEntry entry, string text)
+	{
+		using StreamWriter writer = new StreamWriter(entry.Open(), new UTF8Encoding(false));
+		writer.Write(text);
 	}
 
 	private static SessionInfo CreateSession(string directory, string currentId, string sessionId, string cwd, bool subagent)
@@ -140,7 +231,7 @@ internal static class ConversationLineageSelfTest
 			{ "type", "response_item" },
 			{ "payload", new Dictionary<string, object> { { "type", "message" }, { "role", "user" }, { "content", new object[0] } } }
 		};
-		string contents = CctRunner.NewSerializer().Serialize(root) + Environment.NewLine + CctRunner.NewSerializer().Serialize(message) + Environment.NewLine;
+		string contents = JsonSerialization.NewSerializer().Serialize(root) + Environment.NewLine + JsonSerialization.NewSerializer().Serialize(message) + Environment.NewLine;
 		File.WriteAllText(path, contents, new UTF8Encoding(false));
 	}
 
@@ -148,13 +239,13 @@ internal static class ConversationLineageSelfTest
 	{
 		using (ZipArchive archive = ZipFile.OpenRead(bundlePath))
 		{
-			CctBundleManifest manifest;
+			BundleManifest manifest;
 			using (StreamReader reader = new StreamReader(archive.GetEntry("manifest.json").Open(), Encoding.UTF8))
 			{
-				manifest = CctRunner.NewSerializer().Deserialize<CctBundleManifest>(reader.ReadToEnd());
+				manifest = JsonSerialization.NewSerializer().Deserialize<BundleManifest>(reader.ReadToEnd());
 			}
-			CctBundleSession main = manifest.sessions.Single(item => string.Equals(item.origin_thread_id, mainOriginId, StringComparison.OrdinalIgnoreCase));
-			CctBundleSession child = manifest.sessions.Single(item => string.Equals(item.origin_thread_id, childOriginId, StringComparison.OrdinalIgnoreCase));
+			BundleSession main = manifest.sessions.Single(item => string.Equals(item.origin_thread_id, mainOriginId, StringComparison.OrdinalIgnoreCase));
+			BundleSession child = manifest.sessions.Single(item => string.Equals(item.origin_thread_id, childOriginId, StringComparison.OrdinalIgnoreCase));
 			if (!string.Equals(main.thread_id, expectedMainId, StringComparison.OrdinalIgnoreCase) || !string.Equals(child.thread_id, expectedChildId, StringComparison.OrdinalIgnoreCase))
 			{
 				throw new InvalidOperationException("rewritten manifest lineage IDs are incorrect");
@@ -178,7 +269,7 @@ internal static class ConversationLineageSelfTest
 		using (StreamReader reader = new StreamReader(entry.Open(), Encoding.UTF8))
 		{
 			string firstLine = reader.ReadLine();
-			Dictionary<string, object> root = CctRunner.NewSerializer().DeserializeObject(firstLine) as Dictionary<string, object>;
+			Dictionary<string, object> root = JsonSerialization.NewSerializer().DeserializeObject(firstLine) as Dictionary<string, object>;
 			return (Dictionary<string, object>)root["payload"];
 		}
 	}

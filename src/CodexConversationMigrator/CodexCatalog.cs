@@ -34,19 +34,24 @@ internal static class CodexCatalog
 		return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 	}
 
-	public static CatalogResult Build(List<SessionInfo> cctSessions)
+	public static CatalogResult Build(List<SessionInfo> sessions)
+	{
+		return Build(sessions, ResolveCodexHome());
+	}
+
+	public static CatalogResult Build(List<SessionInfo> sessions, string codexHome)
 	{
 		CatalogResult catalogResult = new CatalogResult();
 		catalogResult.Projects = new List<ProjectGroup>();
 		catalogResult.Diagnostic = string.Empty;
 		catalogResult.UsedCodexIndex = false;
 		CatalogResult catalogResult2 = catalogResult;
-		string text = ResolveCodexHome();
+		string text = string.IsNullOrWhiteSpace(codexHome) ? ResolveCodexHome() : Path.GetFullPath(codexHome);
 		string statePath = Path.Combine(text, ".codex-global-state.json");
 		string path = Path.Combine(text, "session_index.jsonl");
-		int num = ApplyRolloutMetadata(cctSessions, text);
-		ApplyIndexedParentRelationships(cctSessions, text);
-		Dictionary<string, SessionInfo> dictionary = cctSessions.Where((SessionInfo x) => !string.IsNullOrWhiteSpace(x.ThreadId)).GroupBy((SessionInfo x) => x.ThreadId, StringComparer.OrdinalIgnoreCase).ToDictionary((IGrouping<string, SessionInfo> group) => group.Key, (IGrouping<string, SessionInfo> group) => (from x in @group
+		int num = ApplyRolloutMetadata(sessions, text);
+		ApplyIndexedParentRelationships(sessions, text);
+		Dictionary<string, SessionInfo> dictionary = sessions.Where((SessionInfo x) => !string.IsNullOrWhiteSpace(x.ThreadId)).GroupBy((SessionInfo x) => x.ThreadId, StringComparer.OrdinalIgnoreCase).ToDictionary((IGrouping<string, SessionInfo> group) => group.Key, (IGrouping<string, SessionInfo> group) => (from x in @group
 			orderby x.MetadataVerified descending, x.UpdatedDate descending
 			select x).First(), StringComparer.OrdinalIgnoreCase);
 		Dictionary<string, string> dictionary2 = ReadSessionIndex(path);
@@ -190,7 +195,7 @@ internal static class CodexCatalog
 	private static int ApplyRolloutMetadata(IEnumerable<SessionInfo> sessions, string codexHome)
 	{
 		int num = 0;
-		JavaScriptSerializer javaScriptSerializer = CctRunner.NewSerializer();
+		JavaScriptSerializer javaScriptSerializer = JsonSerialization.NewSerializer();
 		foreach (SessionInfo session in sessions)
 		{
 			string text = ResolveSessionPath(session, codexHome);
@@ -378,7 +383,7 @@ internal static class CodexCatalog
 		{
 			return dictionary;
 		}
-		JavaScriptSerializer javaScriptSerializer = CctRunner.NewSerializer();
+		JavaScriptSerializer javaScriptSerializer = JsonSerialization.NewSerializer();
 		foreach (string item in File.ReadLines(path, Encoding.UTF8))
 		{
 			if (string.IsNullOrWhiteSpace(item))
@@ -415,7 +420,7 @@ internal static class CodexCatalog
 		}
 		try
 		{
-			JavaScriptSerializer javaScriptSerializer = CctRunner.NewSerializer();
+			JavaScriptSerializer javaScriptSerializer = JsonSerialization.NewSerializer();
 			if (!(javaScriptSerializer.DeserializeObject(File.ReadAllText(statePath, Encoding.UTF8)) is Dictionary<string, object> dictionary))
 			{
 				return;

@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace CodexConversationMigrator;
 
-internal sealed class CctBundleManifest
+internal sealed class BundleManifest
 {
 	public string format_version { get; set; }
 
@@ -16,5 +16,5 @@ internal sealed class CctBundleManifest
 
 	public string codex_version { get; set; }
 
-	public List<CctBundleSession> sessions { get; set; }
+	public List<BundleSession> sessions { get; set; }
 }

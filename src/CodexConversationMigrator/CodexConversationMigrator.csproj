@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
   <PropertyGroup>
-    <VersionFile>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\VERSION'))</VersionFile>
+    <VersionFile>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\..\VERSION'))</VersionFile>
     <CcmVersionRaw>$([System.IO.File]::ReadAllText('$(VersionFile)'))</CcmVersionRaw>
     <CcmVersion>$(CcmVersionRaw.Trim())</CcmVersion>
     <AssemblyName>CodexConversationMigrator</AssemblyName>
@@ -13,6 +13,7 @@
     <AssemblyVersion>$(CcmVersion).0</AssemblyVersion>
     <FileVersion>$(CcmVersion).0</FileVersion>
     <InformationalVersion>$(CcmVersion)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>False</IncludeSourceRevisionInInformationalVersion>
     <OutputType>WinExe</OutputType>
     <UseWPF>True</UseWPF>
     <UseWindowsForms>True</UseWindowsForms>
@@ -32,6 +33,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="System.Web.Extensions" />
     <Reference Include="System.Web" />
     <Reference Include="System.Core" />
@@ -44,10 +49,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Remove="Properties\AssemblyInfo.cs" />
     <Resource Include="assets\app-icon.ico" />
     <Page Remove="CodexConversationMigrator.xaml" />
     <None Include="CodexConversationMigrator.xaml" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\third_party\cct\cct.exe" Link="cct.exe" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

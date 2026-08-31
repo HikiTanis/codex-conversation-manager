@@ -24,7 +24,7 @@ internal static class ConversationLineage
 			{
 				firstLine = reader.ReadLine();
 			}
-			if (string.IsNullOrWhiteSpace(firstLine) || !(CctRunner.NewSerializer().DeserializeObject(firstLine) is Dictionary<string, object> root))
+			if (string.IsNullOrWhiteSpace(firstLine) || !(JsonSerialization.NewSerializer().DeserializeObject(firstLine) is Dictionary<string, object> root))
 			{
 				return false;
 			}

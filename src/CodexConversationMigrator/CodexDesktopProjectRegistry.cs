@@ -116,7 +116,7 @@ internal static class CodexDesktopProjectRegistry
 				expected[thread.Id] = new ExpectedAssignment { ProjectId = projectId, TargetPath = targetPath };
 			}
 		}
-		JavaScriptSerializer serializer = CctRunner.NewSerializer();
+		JavaScriptSerializer serializer = JsonSerialization.NewSerializer();
 		byte[] updatedBytes = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(serializer.Serialize(state));
 		if (!File.ReadAllBytes(result.StatePath).SequenceEqual(originalBytes))
 		{
@@ -185,7 +185,7 @@ internal static class CodexDesktopProjectRegistry
 		{
 			return result;
 		}
-		JavaScriptSerializer serializer = CctRunner.NewSerializer();
+		JavaScriptSerializer serializer = JsonSerialization.NewSerializer();
 		byte[] updatedBytes = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(serializer.Serialize(state));
 		if (!File.ReadAllBytes(result.StatePath).SequenceEqual(originalBytes))
 		{
@@ -236,7 +236,7 @@ internal static class CodexDesktopProjectRegistry
 		try
 		{
 			string json = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true).GetString(bytes).TrimStart('\uFEFF');
-			if (CctRunner.NewSerializer().DeserializeObject(json) is Dictionary<string, object> state)
+			if (JsonSerialization.NewSerializer().DeserializeObject(json) is Dictionary<string, object> state)
 			{
 				return state;
 			}

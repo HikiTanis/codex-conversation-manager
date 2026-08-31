@@ -264,7 +264,7 @@ internal static class ConversationIndexMaintenance
 			using (FileStream stream = new FileStream(temporaryRollout, FileMode.CreateNew, FileAccess.Write, FileShare.None))
 			using (StreamWriter writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
 			{
-				writer.WriteLine(CctRunner.NewSerializer().Serialize(sessionMeta));
+				writer.WriteLine(JsonSerialization.NewSerializer().Serialize(sessionMeta));
 			}
 			created = true;
 			CodexAppServerThreadDeletion.DeleteThread(codexHome, thread.Id);
@@ -380,7 +380,7 @@ internal static class ConversationIndexMaintenance
 		using FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 		using StreamReader reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, 8192);
 		string firstLine = reader.ReadLine();
-		Dictionary<string, object> root = string.IsNullOrWhiteSpace(firstLine) ? null : CctRunner.NewSerializer().DeserializeObject(firstLine) as Dictionary<string, object>;
+		Dictionary<string, object> root = string.IsNullOrWhiteSpace(firstLine) ? null : JsonSerialization.NewSerializer().DeserializeObject(firstLine) as Dictionary<string, object>;
 		Dictionary<string, object> payload = root != null && root.TryGetValue("payload", out object payloadValue) ? payloadValue as Dictionary<string, object> : null;
 		if (payload == null)
 		{
@@ -402,7 +402,7 @@ internal static class ConversationIndexMaintenance
 		return new ThreadHeaderInfo
 		{
 			ParentThreadId = parentId,
-			Source = sourceValue == null ? string.Empty : CctRunner.NewSerializer().Serialize(sourceValue)
+			Source = sourceValue == null ? string.Empty : JsonSerialization.NewSerializer().Serialize(sourceValue)
 		};
 	}
 
@@ -527,7 +527,7 @@ internal static class ConversationIndexMaintenance
 		}
 		try
 		{
-			Dictionary<string, object> root = CctRunner.NewSerializer().DeserializeObject(File.ReadAllText(path, Encoding.UTF8)) as Dictionary<string, object>;
+			Dictionary<string, object> root = JsonSerialization.NewSerializer().DeserializeObject(File.ReadAllText(path, Encoding.UTF8)) as Dictionary<string, object>;
 			if (root != null && root.TryGetValue("thread_ids", out object value) && value is object[] ids)
 			{
 				foreach (object id in ids)
@@ -561,7 +561,7 @@ internal static class ConversationIndexMaintenance
 				{ "updated_at", DateTimeOffset.Now.ToString("o") },
 				{ "thread_ids", ids.OrderBy((string id) => id, StringComparer.OrdinalIgnoreCase).Cast<object>().ToArray() }
 			};
-			File.WriteAllText(temporary, CctRunner.NewSerializer().Serialize(root), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			File.WriteAllText(temporary, JsonSerialization.NewSerializer().Serialize(root), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 			if (File.Exists(path))
 			{
 				File.Replace(temporary, path, null, ignoreMetadataErrors: true);

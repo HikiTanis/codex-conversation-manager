@@ -60,7 +60,7 @@ internal static class CodexAppServerThreadDeletion
 			throw new FileNotFoundException("没有找到可独立调用的 Codex CLI（codex.exe）。会话删除和旧侧边栏修复需要先安装 Codex CLI；为避免留下打不开的侧边栏记录，本次没有删除任何会话。");
 		}
 
-		string requestId = "cct-delete-" + Guid.NewGuid().ToString("N");
+		string requestId = "ccm-delete-" + Guid.NewGuid().ToString("N");
 		ProcessStartInfo startInfo = new ProcessStartInfo
 		{
 			FileName = codexPath,
@@ -84,7 +84,7 @@ internal static class CodexAppServerThreadDeletion
 			standardError = process.StandardError.ReadToEndAsync();
 			WriteRequest(process, new Dictionary<string, object>
 			{
-				{ "id", "cct-initialize" },
+				{ "id", "ccm-initialize" },
 				{ "method", "initialize" },
 				{ "params", new Dictionary<string, object>
 					{
@@ -92,7 +92,7 @@ internal static class CodexAppServerThreadDeletion
 							{
 								{ "name", "codex-conversation-migrator" },
 								{ "title", "Codex Conversation Migrator" },
-								{ "version", typeof(CodexAppServerThreadDeletion).Assembly.GetName().Version?.ToString(3) ?? "3.0.0" }
+								{ "version", typeof(CodexAppServerThreadDeletion).Assembly.GetName().Version?.ToString(3) ?? "1.0.0" }
 							}
 						}
 					}
@@ -390,14 +390,14 @@ internal static class CodexAppServerThreadDeletion
 
 	private static void WriteRequest(Process process, Dictionary<string, object> request)
 	{
-		process.StandardInput.WriteLine(CctRunner.NewSerializer().Serialize(request));
+		process.StandardInput.WriteLine(JsonSerialization.NewSerializer().Serialize(request));
 	}
 
 	private static Dictionary<string, object> ParseObject(string json)
 	{
 		try
 		{
-			return CctRunner.NewSerializer().DeserializeObject(json) as Dictionary<string, object> ?? new Dictionary<string, object>();
+			return JsonSerialization.NewSerializer().DeserializeObject(json) as Dictionary<string, object> ?? new Dictionary<string, object>();
 		}
 		catch
 		{

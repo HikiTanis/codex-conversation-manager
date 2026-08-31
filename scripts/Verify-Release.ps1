@@ -5,7 +5,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Split-Path -Parent $scriptRoot
 $versionFile = Join-Path $repoRoot 'VERSION'
 
 function Assert-FileContains {
@@ -44,7 +45,8 @@ if (-not [string]::Equals($Version, $canonicalVersion, [StringComparison]::Ordin
 
 $windowVersionText = 'Text="v' + $Version + '"'
 $protocolVersionExpression = 'typeof(CodexAppServerThreadDeletion).Assembly.GetName().Version?.ToString(3)'
-Assert-FileContains (Join-Path $repoRoot 'src\CodexConversationMigrator.xaml') $windowVersionText 'Window version label'
+Assert-FileContains (Join-Path $repoRoot 'src\CodexConversationMigrator\CodexConversationMigrator.xaml') $windowVersionText 'Window version label'
+Assert-FileContains (Join-Path $repoRoot 'src\CodexConversationMigrator\DeletionDialogs.cs') '/CodexConversationMigrator;component/DialogTheme.xaml' 'Dialog theme resource path'
 Assert-FileContains (Join-Path $repoRoot 'src\CodexConversationMigrator\CodexAppServerThreadDeletion.cs') $protocolVersionExpression 'Codex app-server client version source'
 Assert-FileContains (Join-Path $repoRoot 'README.md') "CodexConversationMigrator-Windows-v$Version.zip" 'English download instructions'
 Assert-FileContains (Join-Path $repoRoot 'README.zh-CN.md') "CodexConversationMigrator-Windows-v$Version.zip" 'Chinese download instructions'
@@ -52,16 +54,16 @@ Assert-FileContains (Join-Path $repoRoot 'README.md') 'Codex CLI 0.148.0 or late
 Assert-FileContains (Join-Path $repoRoot 'README.zh-CN.md') 'Codex CLI 0.148.0 或更高版本' 'Chinese Codex CLI compatibility requirement'
 Assert-FileContains (Join-Path $repoRoot 'CHANGELOG.md') "## [$Version]" 'Changelog release section'
 
-$releaseNotes = Join-Path $repoRoot "docs\RELEASE_NOTES_v$Version.md"
+$releaseNotes = Join-Path $repoRoot "docs\releases\v$Version.md"
 if (-not (Test-Path -LiteralPath $releaseNotes)) {
     throw "Release notes are missing for VERSION $($Version): $releaseNotes"
 }
 Assert-FileContains $releaseNotes 'Codex CLI 0.148.0 or later' 'Release-note Codex CLI compatibility requirement'
 
-$projectFile = Join-Path $repoRoot 'src\CodexConversationMigrator.csproj'
-Assert-FileContains $projectFile '..\VERSION' 'MSBuild VERSION source'
+$projectFile = Join-Path $repoRoot 'src\CodexConversationMigrator\CodexConversationMigrator.csproj'
+Assert-FileContains $projectFile '..\..\VERSION' 'MSBuild VERSION source'
 
-$builtExe = Join-Path $repoRoot 'src\bin\Release\net48\CodexConversationMigrator.exe'
+$builtExe = Join-Path $repoRoot 'src\CodexConversationMigrator\bin\Release\net48\CodexConversationMigrator.exe'
 if (-not [string]::IsNullOrWhiteSpace($PackagePath)) {
     if (-not (Test-Path -LiteralPath $builtExe)) {
         throw "Release executable is missing: $builtExe"
@@ -106,27 +108,38 @@ if (-not [string]::IsNullOrWhiteSpace($PackagePath)) {
             'CodexConversationMigrator.exe',
             'CodexConversationMigrator.exe.config',
             'CodexConversationMigrator.xaml',
-            'cct.exe',
             'Start.cmd',
             'VERSION',
             'README.md',
             'README.zh-CN.md',
-            'CHANGELOG.md',
-            'PRIVACY.md',
-            'SECURITY.md',
-            'SUPPORT.md',
-            'LICENSE',
-            'THIRD_PARTY_NOTICES.md',
-            'third_party\cct\LICENSE',
-            'docs\BACKUP_FORMATS.md',
-            'docs\RELEASING.md',
-            "docs\RELEASE_NOTES_v$Version.md"
+            'LICENSE'
         )
         foreach ($relativePath in $requiredFiles) {
             $candidate = Join-Path $temporaryRoot $relativePath
             if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
                 throw "Release ZIP is missing required file: $relativePath"
             }
+        }
+
+        $actualFiles = @(Get-ChildItem -LiteralPath $temporaryRoot -File -Recurse | ForEach-Object {
+            $_.FullName.Substring($temporaryRoot.Length + 1).Replace('/', '\')
+        })
+        $unexpectedFiles = @($actualFiles | Where-Object { $requiredFiles -notcontains $_ })
+        if ($actualFiles.Count -ne $requiredFiles.Count -or $unexpectedFiles.Count -gt 0) {
+            throw "Release ZIP must contain only the portable application and concise user documentation. Unexpected files: $($unexpectedFiles -join ', ')"
+        }
+
+        $forbiddenCctEntries = @(Get-ChildItem -LiteralPath $temporaryRoot -Force -Recurse | Where-Object {
+            $relativePath = $_.FullName.Substring($temporaryRoot.Length + 1).Replace('/', '\')
+            $_.Name -ieq 'cct.exe' -or
+            [string]::Equals($relativePath, 'third_party\cct', [StringComparison]::OrdinalIgnoreCase) -or
+            $relativePath.StartsWith('third_party\cct\', [StringComparison]::OrdinalIgnoreCase)
+        })
+        if ($forbiddenCctEntries.Count -gt 0) {
+            $forbiddenPaths = ($forbiddenCctEntries | ForEach-Object {
+                $_.FullName.Substring($temporaryRoot.Length + 1)
+            }) -join ', '
+            throw "Release ZIP must not contain the retired cct dependency: $forbiddenPaths"
         }
 
         $packagedExe = Join-Path $temporaryRoot 'CodexConversationMigrator.exe'

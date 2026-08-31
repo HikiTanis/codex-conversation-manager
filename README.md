@@ -1,199 +1,122 @@
 # Codex Conversation Migrator
 
-**Local-first management, backup, and migration for Codex conversations and projects on Windows**
+**Manage, back up, and migrate local Codex conversations and projects on Windows.**
 
-[简体中文](README.zh-CN.md)
+[简体中文](README.zh-CN.md) · Current release: v1.0.0
 
-Codex Conversation Migrator is a Windows desktop application for managing Codex projects, main conversations, and subagent conversations. It handles project-path changes, storage inspection and cleanup, backup and restore, and migration between computers.
+The application keeps Codex projects, main conversations, and subagent conversations organized in one place. It reconnects conversations after a project is renamed or moved, explains local storage use, migrates work between computers, and helps avoid or repair stale sidebar entries during cleanup.
 
-It does more than copy conversation files. The application preserves conversation lineage, remaps project paths during import, updates local task-index and desktop-project associations, and helps Codex display imported conversations under the intended project.
+> This is an unofficial community project. It is not affiliated with or endorsed by OpenAI. Codex local-storage formats may change; keep an independent backup of important data.
 
-> This is an unofficial community project. It is not affiliated with or endorsed by OpenAI. Codex's local storage formats may change; inspect a backup before importing it and keep an independent copy of important data.
+## Problems it solves
 
-## Choose the right workflow
-
-| Goal | Use | Import identity mode |
-| --- | --- | --- |
-| Rename or move a project on the same computer | Create a `.codexchat` backup, then map it to the new folder | **Merge by original ID** |
-| Copy the project folder yourself to another computer | Move the folder and a `.codexchat` backup separately | Merge to continue the same lineage, or copy for an independent duplicate |
-| Move project files and conversations together | Create one `.codexproject` containing one or more projects | Merge or independent copy |
-| Keep a completely separate conversation copy | Use either formal backup type | **Copy as new conversations** |
-| Review or reclaim local storage | Use the Main conversations, Subagents, and app-trash views | Move to app trash first, or permanently delete after review |
-
-## Problems it addresses
-
-| Scenario | Common problem | How the application helps |
-| --- | --- | --- |
-| A project is renamed or moved on the same computer | Existing conversations still reference the old working directory and may no longer appear under the renamed or relocated project | Remaps conversations to the new project folder and updates the local task index and desktop project association |
-| Historical conversations are difficult to inspect | It is hard to see the real path, latest update time, or storage size of each project, main conversation, and subagent conversation | Groups records by project, separates main and subagent conversations, and shows time, size, and path for each record |
-| Large numbers of subagents consume disk space | Subagents may retain full execution context, tool results, and terminal output and can accumulate on drive C | Supports selection, select-all, and batch deletion for subagent records, with recoverable and permanent options |
-| Work must continue on another computer | Project files and Codex conversations are stored separately, so manually copying a project does not necessarily reconnect its conversations | Migrates conversations to an already copied project, or packages projects and all linked conversations together |
-| Work moves back and forth between computers | Conversations continued on the second computer need to merge back without creating unmanaged duplicates | Uses original lineage plus the destination project to identify and merge later conversation content |
+- **A project moved and its conversations disappeared:** reassociate existing conversations with a renamed, relocated, or copied project folder.
+- **Local storage is hard to understand:** separate main and subagent conversations by project, with project totals and each conversation's time, size, Thread ID, and actual path.
+- **Subagents have accumulated:** search, select, select all, and batch-delete main or subagent conversations; after selecting every main conversation in a project, the same operation can also process its folder.
+- **Projects and conversations are difficult to move together:** transfer selected conversations alone, or package one or more projects with all linked conversations.
+- **Round trips create duplicates or shared files:** merge by original identity, or create fresh Thread IDs and fully independent session files.
 
 ## Core capabilities
 
-### Conversation and project management
+| Area | What it does |
+| --- | --- |
+| Conversation and project management | Shows each project folder, file count, and total size; separates main and subagent conversations; fully displays long conversations and opens at the latest message; the user-message rail supports hover previews, click/drag navigation, and a viewer that follows the main window size |
+| Backup and migration | Creates `.codexchat` from selected main conversations across projects, or `.codexproject` from one or more projects with linked main and subagent conversations |
+| Project reassociation | Maps a conversation's recorded project path to a new folder and updates the local task index and desktop-project association |
+| Two import identities | **Smart merge** continues the same lineage; **Independent copy** creates fresh Thread IDs and session files, so deleting one copy cannot delete the other |
+| Cleanup and recovery | Batch-moves records to app trash, restores them, or permanently deletes them; selecting every main conversation in a project enables optional project-folder handling and evidence-backed stale-sidebar repair |
+| Chinese and English UI | Switches between Simplified Chinese and English inside the application |
 
-- Shows each project folder, total project-file size, and file count.
-- Manages main and subagent conversations separately.
-- Shows each conversation's latest update time, session-file size, Thread ID, and actual path.
-- Opens main or subagent conversation content in a read-only viewer.
-- Provides the same select-all, clear-all, and delete-selected workflow in both views.
+Inspection, backup, dry-run validation, and import are built into the application. They require neither a separate transfer utility nor Codex CLI. **Only conversation deletion (app trash or permanent deletion) and stale-sidebar repair require Codex CLI 0.148.0 or later; the latest version is recommended.** Sending or deleting a project folder through Windows does not itself require the CLI.
 
-### Project rename, relocation, and reassociation
+## Download and run
 
-After a project is renamed or moved on the same computer, its conversations can be backed up as `.codexchat` and imported against the new project folder. The application rewrites recorded working-directory information and performs targeted updates to the Codex task index and desktop project association so the conversations can appear under the new location.
+End-user requirements:
 
-### Conversation-only or complete project migration
+- 64-bit Windows 10 or Windows 11;
+- [.NET Framework 4.8 Runtime](https://dotnet.microsoft.com/en-us/download/dotnet-framework/net48);
+- for deletion or sidebar repair only, a compatible locally available [Codex CLI](https://developers.openai.com/codex/cli) 0.148.0 or later. Run `codex --version` to confirm it; the application can also discover compatible runtimes bundled with Codex Desktop or the VS Code extension. Version 0.148.0 is this project's compatibility baseline, not an official OpenAI minimum.
 
-- **Conversations only:** copy the project yourself, then use `.codexchat` to import selected main conversations and associate them with the destination folder.
-- **Projects and conversations together:** use `.codexproject` to package one or more project folders, ordinary files, empty directories, main conversations, and subagent conversations in one file. Directory junctions, symbolic links, NTFS permissions, and alternate data streams are not transferred.
-- **Round-trip migration and merge:** move from computer A to B, continue working on B, then back up again and return to A. Merge by original ID identifies the same lineage within the destination project and merges later content.
-- **Independent copies:** Copy as new conversations assigns fresh Thread IDs and separate session files. Deleting one copy does not delete another.
-- **Codex history modes:** import preserves and verifies each conversation's `legacy` or `paginated` mode; paginated records are also checked for continuous `ordinal` values and `turn_context`. Full paginated-history support still depends on the destination Codex version, so keep the source backup and open imported tasks to verify them. The current [Codex app-server documentation](https://developers.openai.com/codex/app-server) marks paginated history as experimental and says full-history reading and resumption are not yet supported.
+The application is portable and does not need an installer:
 
-### Inspection, trash, and deletion
-
-- Moves selected conversations to the app trash for later restoration or permanent deletion.
-- Calls Codex's official `thread/delete` interface before touching local conversation data, then updates the session file, local task indexes, desktop project state, and matching sidebar records only after official deletion succeeds. If the official interface is unavailable, the original conversation is preserved.
-- Codex deletes spawned descendant threads together with their parent. The application resolves the full parent-child graph first: app-trash deletion stages a separate recoverable copy for every affected descendant, while permanent deletion shows the complete impact count before confirmation.
-- Re-registers the thread index and desktop project association when a conversation is restored from the app trash.
-- Permanently deletes unneeded main or subagent conversations.
-- Optionally processes the related project folder when deleting a main conversation.
-- Moves a project folder to the Windows Recycle Bin or permanently deletes it after explicit confirmation.
-- Repairs both index orphans and older partial deletions where the file and current index row are already gone but Codex still shows the task. Legacy candidates must be confirmed by both a recent Codex `rollout_not_found` log and the latest pre-deletion index backup before they are offered for review.
-- Shows surviving descendants whose parent conversation is gone in an **Orphaned subagents** project instead of hiding the project. During stale-parent repair, safe records are handled first; the application then switches to the correct project, opens the Subagents view, searches the exact Thread ID, and selects the blocking descendant. Move it to app trash and refresh again to finish the parent cleanup.
-- Repairs already-deleted tasks that still appear in the Codex desktop sidebar or a cached task list. Cleanup runs only when Codex is fully closed and only for exact, previously confirmed deleted Thread IDs; it does not clear sign-in data, valid tasks, or project files.
-
-> **Freeing space on drive C:** the app trash is stored inside the Codex data directory. Moving records there protects against accidental deletion but does not materially reclaim space on that drive. Permanently purge confirmed-unneeded records from the app trash to release their storage.
-
-> **Before a formal import, deletion, or restoration:** exit Codex completely so the running desktop app cannot overwrite updated session, index, or sidebar state.
-
-## Download and run (end users)
-
-The release ZIP is portable: there is no installer, and end users do not need the .NET SDK, targeting pack, or repository PowerShell scripts. A 64-bit Windows 10/11 system with the [.NET Framework 4.8 runtime](https://dotnet.microsoft.com/en-us/download/dotnet-framework/net48) is required.
-
-Inspection, backup, and import work directly from the release package because the verified `cct.exe` dependency is included. **The full feature set, including conversation deletion and legacy-sidebar repair, requires Codex CLI 0.148.0 or later; the latest release is recommended.** This minimum does not apply to inspection, backup, or import. The application checks common npm installation paths, `PATH`, its own directory, and versioned Codex/VS Code extension runtimes, then prefers the newer discovered version. Run `codex --version` in PowerShell first. If it reports a version older than `0.148.0`, or if the command is unavailable, update or install the CLI using the [official Codex CLI documentation](https://developers.openai.com/codex/cli), or install the npm package:
-
-```powershell
-npm install -g @openai/codex
-codex --version
-```
-
-The compatibility baseline was exercised with isolated data on `0.148.0` and newer `0.150.0` builds; versions older than `0.148.0` are unsupported. If a compatible CLI cannot be found or official deletion is rejected, the application stops and preserves the original conversation.
-
-1. Download `CodexConversationMigrator-Windows-v3.0.0.zip` and `SHA256SUMS.txt` from Releases.
-2. Verify the ZIP before extracting it:
+1. Download `CodexConversationMigrator-Windows-v1.0.0.zip` and `SHA256SUMS.txt` from GitHub Releases.
+2. Compare the release checksum:
 
    ```powershell
-   $zip = '.\CodexConversationMigrator-Windows-v3.0.0.zip'
-   $expected = ((Get-Content .\SHA256SUMS.txt -Raw).Trim() -split '\s+')[0]
-   $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
-   if ($actual -ne $expected) { throw 'SHA-256 mismatch. Do not run this package.' }
-   $actual
+   $zip = '.\CodexConversationMigrator-Windows-v1.0.0.zip'
+   (Get-FileHash $zip -Algorithm SHA256).Hash
+   Get-Content .\SHA256SUMS.txt
    ```
 
-3. Extract the entire ZIP into a new folder. Do not run the application from inside the ZIP, and keep the EXE, XAML, and `cct.exe` together.
-4. Double-click `Start.cmd`; `CodexConversationMigrator.exe` can also be started directly.
-5. When upgrading, extract the new version into a separate folder instead of mixing it with files from an older release.
+   The two SHA-256 values must match.
+3. Extract the complete ZIP into a new folder. Do not run it from inside the archive or mix files from different versions.
+4. Double-click `Start.cmd`, or run `CodexConversationMigrator.exe`.
 
-The application EXE and bundled `cct.exe` are currently not Authenticode-signed, so Windows SmartScreen may show an unknown-publisher warning. Verify the downloaded ZIP against `SHA256SUMS.txt` and run it only if you trust the release source. A matching hash detects a changed download; it does not replace publisher identity verification.
+The executable is not currently Authenticode-signed, so Windows may show an unknown-publisher warning. Download only from a release source you trust and verify the SHA-256 first.
 
-## Basic usage
-
-### Create a backup
-
-1. Open **Manage and Back Up** and choose **Projects + conversations** or **Conversations only**.
-2. Select the projects or main conversations to include. Selections can span multiple projects.
-3. Choose the destination folder and create the `.codexproject` or `.codexchat` package.
-
-### Restore or migrate
-
-1. Open **Import and Restore** and select the backup package.
-2. For `.codexchat`, select each project's actual folder. For `.codexproject`, select where project folders should be restored.
-3. Use **Merge by original ID** to continue the same lineage, or **Copy as new conversations** for independent files and Thread IDs.
-4. Run **Inspect first (no writes)**. After it passes, exit Codex completely and start the import.
-5. Reopen Codex and the destination project, then confirm that the conversations appear under that project.
-
-### Inspect and clean up
-
-1. Select a project, then switch between **Main conversations** and **Subagent conversations**.
-2. Review the latest update time, size, Thread ID, path, or read-only conversation content.
-3. Select individual records or use Select all, then choose **Delete selected**. If a main conversation has spawned descendants, the confirmation shows the additional impact count.
-4. Exit Codex before confirming deletion or restoration. If an older version left a broken sidebar item, open it once in Codex so the failure is recorded, exit Codex completely, then open this application and click **Refresh / Repair**. Review the title and Thread ID before confirming repair. If the conversation is already gone but its sidebar item remains, Refresh completes the matching sidebar cleanup before reporting that Codex can be reopened.
-5. Use the app trash when recovery may be needed; permanently purge confirmed-unneeded records when storage must be reclaimed.
-
-## Typical workflows
+## Three common workflows
 
 ### 1. Rename or move a project on the same computer
 
-1. Select the conversations to retain and create a `.codexchat` backup.
-2. On the import page, choose the project's new folder and keep conversation-to-project linking enabled.
-3. Run the read-only inspection. If it passes, exit Codex completely and perform the import.
+1. Create a `.codexchat` for the conversations associated with the original project. If the folder has already moved, you can still scan and back up the old conversations while their session files remain; do not delete them first.
+2. After renaming or moving the project, import the backup and select the new project folder.
+3. Run the read-only inspection. If it passes, exit Codex completely and import with **Smart merge**.
 4. Reopen Codex and the relocated project, then confirm that its conversations appear under the project.
 
-### 2. Copy the project manually and migrate conversations only
+### 2. Copy a project yourself and migrate conversations only
 
-1. Create a `.codexchat` backup on the source computer.
-2. Copy the project folder and `.codexchat` file to the destination computer.
-3. Import the backup and select the project's actual destination folder.
+1. Select main conversations across one or more projects and create a `.codexchat` on the source computer.
+2. Copy the project folders and the backup file separately to the destination computer.
+3. Import the backup and map every source project to its actual destination folder. Use **Smart merge** to continue the same lineage, or **Independent copy** for a separate copy.
 
-### 3. Move projects and conversations in one package
+### 3. Move projects and conversations together
 
-1. Select one or more projects and create a `.codexproject` backup.
-2. Copy that single package to the destination computer.
-3. Select the restoration location, inspect the package, and then restore project files and linked conversations.
+1. Select one or more projects and create a `.codexproject`.
+2. On the destination computer, choose where to restore each project, inspect the package, and then import the project files and all linked conversations.
+3. To bring later work back to the first computer, create another backup and use **Smart merge**. Matching is limited to the selected destination project.
 
-### 4. Continue on another computer and merge back
-
-1. Create a new backup for the same project on the second computer.
-2. Return the backup to the first computer and select the original project folder.
-3. Choose Merge by original ID. Matching is limited to the destination project, and later conversation content is merged into the same lineage.
+> Exit Codex completely before import, deletion, restoration, or sidebar repair so the running client cannot overwrite local state. Keep the source package until every imported conversation has been opened and verified in the destination Codex client.
 
 ## Backup formats
 
-| Extension | Contents | Recommended use |
+| Extension | Contents | Use it for |
 | --- | --- | --- |
-| `.codexchat` | Selected main conversations without project files | Manually copied projects, renamed or relocated projects, and conversation-only archives |
-| `.codexproject` | One or more project folders plus linked main and subagent conversations | Complete project-workspace migration |
-| `.codexpack` / `.codexbundle` | Legacy compatibility formats | Importing older backups only |
+| `.codexchat` | Selected main conversations across projects; no project files or subagents | Renamed or moved projects, manually copied projects, and conversation-only archives or transfers |
+| `.codexproject` | One or more project folders plus all linked main and subagent conversations | Complete project-and-conversation backup or migration |
+| `.codexpack` / `.codexbundle` | Backups from older releases | Legacy import only; new packages are not created in these formats |
 
-## Build from source (developers)
+App trash is not a formal backup. It lives at `<CODEX_HOME>\conversation-migrator-trash` and exists for recovery from accidental deletion. Moving a session there usually does not reclaim space on drive C; permanently purge confirmed-unneeded entries to release that space.
 
-Requirements:
+See `docs/BACKUP_FORMATS.md` in the source repository for package structure, conflict handling, validation, and resource limits.
 
-- Windows 10 or Windows 11
-- .NET SDK 8.x
-- .NET Framework 4.8 targeting pack
-- PowerShell 5.1 or newer
+## Compatibility and limitations
 
-`VERSION` is the authoritative release version. From the repository root, one command validates that version, downloads any missing pinned component, builds the application, runs the functional and render tests, removes older local release ZIPs, and creates the current package:
-
-```powershell
-.\package.ps1
-```
-
-Passing `-Version` is optional and acts as an assertion; it must match `VERSION`:
-
-```powershell
-.\package.ps1 -Version 3.0.0
-```
-
-`package.ps1` invokes the build, test, and release-verification scripts automatically. If `cct.exe` is missing, the build invokes `Get-Cct.ps1`, downloads pinned upstream `cct` v1.2.0, and verifies both the archive and executable with SHA-256. The deterministic ZIP and `SHA256SUMS.txt` are written to `release/`. The desktop application itself does not download build dependencies.
-
-See [docs/RELEASING.md](docs/RELEASING.md) for the maintainer checklist.
+- `.jsonl.zst` sessions currently expose index time, size, and path only. Their content cannot be previewed, included in a formal backup, or imported; keep the original compressed file.
+- `.codexproject` preserves ordinary files, empty directories, and modification times. It does not transfer junctions, symbolic links, NTFS permissions, or alternate data streams.
+- Project restore can require an empty destination, keep existing same-name files, or create a recovery ZIP before overwriting. Review the destination and available disk space first.
+- Import validates paths, Thread IDs, checksums, archive structure, and resource boundaries, and uses transaction snapshots for rollback. It cannot guarantee compatibility with an unknown future Codex storage format.
+- For `paginated` history, import stops when complete-history, turn-pagination, or resume conditions cannot be validated safely. Still open every imported conversation in the destination Codex client to verify it.
 
 ## Privacy and safety
 
-- The application runs locally and has no telemetry, cloud-sync, account, or automatic-update feature.
-- Formal backups and app-trash entries are not encrypted. They can contain prompts, source code, command output, local paths, environment details, and secrets; treat them as sensitive files.
-- Project packages contain ordinary files and empty directories but skip directory junctions and symbolic links. NTFS permissions and alternate data streams are not transferred.
-- Permanent deletion cannot be undone by this application. Confirm conversation and project paths before proceeding.
-- Import updates Codex session files, the local task index, and desktop project-association data. The application validates writes, but important data should still have an independent backup.
-- Never attach a real backup package, session JSONL, Codex database, or unredacted screenshot to a public issue.
+- The application runs locally and has no telemetry, cloud sync, account system, or automatic updater.
+- Formal packages, recovery ZIPs, and app-trash entries are not encrypted. They may contain prompts, responses, source code, command output, local paths, and secrets; handle them as sensitive files.
+- Permanent deletion cannot be undone by this application. Verify the full path before deleting a project folder.
+- Formal packages remain user-managed files. Deleting a source conversation does not delete an existing `.codexchat` or `.codexproject`.
+- Never upload a real backup, session JSONL, Codex database, or unredacted screenshot to a public issue.
 
-See [PRIVACY.md](PRIVACY.md), [SECURITY.md](SECURITY.md), [backup-format details](docs/BACKUP_FORMATS.md), [v3.0.0 release notes](docs/RELEASE_NOTES_v3.0.0.md), [CHANGELOG.md](CHANGELOG.md), and [SUPPORT.md](SUPPORT.md).
+For the complete privacy and security boundaries, see `docs/PRIVACY.md` and `.github/SECURITY.md` in the source repository.
 
-## Third-party component and license
+## Development and documentation
 
-Release packages include `cct` v1.2.0 from [ahmojo/codex-claude-transfer](https://github.com/ahmojo/codex-claude-transfer), used under the MIT License. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Codex Conversation Migrator is available under the [MIT License](LICENSE).
+Source builds require Windows 10/11, .NET SDK 8.x, and PowerShell 5.1 or later. A separate .NET Framework 4.8 Targeting Pack is not required. From the repository root, run:
+
+```powershell
+.\scripts\package.ps1
+```
+
+The script restores pinned dependencies, builds the application, runs Chinese and English functional and UI tests, validates the release candidate, and writes the ZIP plus `SHA256SUMS.txt` to `release/`. `VERSION` is the single source of truth for the release version.
+
+The source repository also contains `docs/releases/v1.0.0.md` (release notes), `CHANGELOG.md` (version history), `docs/RELEASING.md` (maintainer workflow), `.github/SUPPORT.md` (issue reporting), and `.github/CONTRIBUTING.md` (contributor guide).
+
+Licensed under the [MIT License](LICENSE).

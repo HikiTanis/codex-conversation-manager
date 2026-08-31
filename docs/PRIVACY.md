@@ -12,17 +12,18 @@ Depending on the selected operation, the application can read:
 - local Codex error logs used to confirm an older partial-deletion candidate;
 - project files selected for a `.codexproject` backup.
 
-The application invokes the bundled `cct.exe` for defined local inspection, export, dry-run, and import operations. Conversation deletion and supported legacy-sidebar repair invoke an independently installed Codex CLI through its local app-server protocol. These executables are not used to submit prompts or start model work.
-
-`Get-Cct.ps1` is a developer helper that downloads one pinned third-party build from GitHub when the dependency is missing and verifies its archive and EXE hashes. The desktop application does not perform that download.
+Inspection, backup, dry-run, and import are performed by the application's built-in native engine. The release package does not bundle or download a third-party migration executable. Conversation deletion and supported legacy-sidebar repair use a compatible locally available Codex CLI executable through its app-server protocol. Codex CLI 0.148.0 or later is this project's supported compatibility baseline, and the latest release is recommended; the application can also discover compatible runtimes bundled with Codex Desktop or the VS Code extension. The CLI is not required for inspection, backup, or import, and the application does not use it to submit prompts or start model work.
 
 ## Local data the application can write
 
 - Formal `.codexchat` and `.codexproject` packages are written only to a folder selected by the user.
 - App-trash records are stored inside the active Codex data directory and remain there until restored or permanently purged.
 - Import and restoration can update session files, task indexes, and desktop project-association data.
+- Before risky index or desktop-state writes, local safety copies can be stored under the active Codex data directory. They may contain task titles, Thread IDs, project paths, and index metadata; they are not formal conversation backups or app-trash records.
 - Overwrite-mode project restoration can create a recovery ZIP inside the active Codex data directory.
 - A selected project folder can be sent to the Windows Recycle Bin or permanently deleted only after explicit confirmation.
+
+Compressed `.jsonl.zst` sessions are currently read only at the index-metadata level. Their conversation contents are not previewed, formally backed up, or imported.
 
 ## Sensitive content
 

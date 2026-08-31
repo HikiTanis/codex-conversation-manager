@@ -16,7 +16,9 @@ internal sealed class PackManifest
 
 	public bool includes_subagents { get; set; }
 
-	public string cct_version { get; set; }
+	public string engine { get; set; }
+
+	public string engine_version { get; set; }
 
 	public List<string> bundles { get; set; }
 

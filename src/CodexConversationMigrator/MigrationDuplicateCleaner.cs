@@ -50,12 +50,12 @@ internal static class MigrationDuplicateCleaner
 			{
 				continue;
 			}
-			CctBundleManifest cctBundleManifest;
+			BundleManifest bundleManifest;
 			using (StreamReader streamReader = new StreamReader(entry.Open(), Encoding.UTF8))
 			{
-				cctBundleManifest = CctRunner.NewSerializer().Deserialize<CctBundleManifest>(streamReader.ReadToEnd());
+				bundleManifest = JsonSerialization.NewSerializer().Deserialize<BundleManifest>(streamReader.ReadToEnd());
 			}
-			foreach (CctBundleSession item in cctBundleManifest.sessions ?? new List<CctBundleSession>())
+			foreach (BundleSession item in bundleManifest.sessions ?? new List<BundleSession>())
 			{
 				if (item == null || item.compressed || string.IsNullOrWhiteSpace(item.thread_id) || string.IsNullOrWhiteSpace(item.bundle_path))
 				{
@@ -123,14 +123,14 @@ internal static class MigrationDuplicateCleaner
 			dictionary.Add("reason", "Codex 对话迁移助手 2.1.6 生成的内容完全相同的新 ID 副本");
 			dictionary.Add("files", list);
 			Dictionary<string, object> obj2 = dictionary;
-			File.WriteAllText(path2, CctRunner.NewSerializer().Serialize(obj2), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			File.WriteAllText(path2, JsonSerialization.NewSerializer().Serialize(obj2), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 		}
 		duplicateCleanupResult.MovedCount = list.Count;
 		duplicateCleanupResult.TrashDirectory = text;
 		return duplicateCleanupResult;
 	}
 
-	private static IEnumerable<string> CandidateFiles(string codexHome, CctBundleSession session)
+	private static IEnumerable<string> CandidateFiles(string codexHome, BundleSession session)
 	{
 		string normalized = session.bundle_path.Replace('\\', '/');
 		string relative = normalized;
@@ -191,7 +191,7 @@ internal static class MigrationDuplicateCleaner
 			num2--;
 		}
 		object value;
-		Dictionary<string, object> dictionary = ((CctRunner.NewSerializer().DeserializeObject(Encoding.UTF8.GetString(data, 0, num2)) is Dictionary<string, object> dictionary2 && dictionary2.TryGetValue("payload", out value)) ? (value as Dictionary<string, object>) : null);
+		Dictionary<string, object> dictionary = ((JsonSerialization.NewSerializer().DeserializeObject(Encoding.UTF8.GetString(data, 0, num2)) is Dictionary<string, object> dictionary2 && dictionary2.TryGetValue("payload", out value)) ? (value as Dictionary<string, object>) : null);
 		if (dictionary == null)
 		{
 			return null;
@@ -223,7 +223,7 @@ internal static class MigrationDuplicateCleaner
 		Dictionary<string, object> dictionary;
 		try
 		{
-			dictionary = CctRunner.NewSerializer().DeserializeObject(Encoding.UTF8.GetString(data, 0, num2)) as Dictionary<string, object>;
+			dictionary = JsonSerialization.NewSerializer().DeserializeObject(Encoding.UTF8.GetString(data, 0, num2)) as Dictionary<string, object>;
 		}
 		catch
 		{
@@ -244,7 +244,7 @@ internal static class MigrationDuplicateCleaner
 		{
 			dictionary2["cwd"] = "{project-path}";
 		}
-		byte[] bytes = Encoding.UTF8.GetBytes(CctRunner.NewSerializer().Serialize(OrderJsonValue(dictionary)) + "\n");
+		byte[] bytes = Encoding.UTF8.GetBytes(JsonSerialization.NewSerializer().Serialize(OrderJsonValue(dictionary)) + "\n");
 		using SHA256 sHA = SHA256.Create();
 		using MemoryStream memoryStream = new MemoryStream();
 		memoryStream.Write(bytes, 0, bytes.Length);

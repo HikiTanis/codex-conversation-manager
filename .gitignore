@@ -10,9 +10,21 @@
 artifacts/
 release/*
 !release/.gitkeep
+scratch/
+TestResults/
+*.trx
 
-# Downloaded third-party executable (fetched and hash-verified by Get-Cct.ps1)
-third_party/cct/cct.exe
+# Private Codex/session/package data
+*.codexchat
+*.codexproject
+*.codexpack
+*.codexbundle
+*.jsonl
+*.jsonl.zst
+*.sqlite
+*.sqlite3
+*.cct-bak-*
+*.ccm-txn-bak-*
 
 # OS and editor files
 .DS_Store

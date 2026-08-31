@@ -47,20 +47,42 @@ internal static class WinSqliteReader
 	{
 		IntPtr db = IntPtr.Zero;
 		IntPtr statement = IntPtr.Zero;
+		List<DbThread> list = new List<DbThread>();
 		try
 		{
-			if (sqlite3_open_v2(Utf8(databasePath), out db, 1, IntPtr.Zero) != 0)
+			if (sqlite3_open_v2(Utf8(databasePath), out db, SQLITE_OPEN_READONLY, IntPtr.Zero) != SQLITE_OK)
 			{
 				throw new InvalidDataException("无法只读打开 Codex 索引：" + Error(db));
 			}
-			bool hasSpawnEdges = TableExists(db, "thread_spawn_edges");
-			bool hasHistoryMode = ColumnExists(db, "threads", "history_mode");
-			string value = "select id,cwd,rollout_path,title,source,coalesce(thread_source,''),archived,coalesce(updated_at_ms,updated_at*1000)," + (hasSpawnEdges ? "coalesce((select parent_thread_id from thread_spawn_edges where child_thread_id=threads.id limit 1),'')" : "''") + "," + (hasHistoryMode ? "coalesce(history_mode,'legacy')" : "'legacy'") + " from threads";
-			if (sqlite3_prepare_v2(db, Utf8(value), -1, out statement, IntPtr.Zero) != 0)
+			if (!TableExists(db, "threads"))
+			{
+				return list;
+			}
+			HashSet<string> threadColumns = ReadColumns(db, "threads");
+			if (!threadColumns.Contains("id"))
+			{
+				return list;
+			}
+			HashSet<string> edgeColumns = TableExists(db, "thread_spawn_edges")
+				? ReadColumns(db, "thread_spawn_edges")
+				: new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			string sql = "select " + string.Join(",", new[]
+			{
+				TextColumn(threadColumns, "t", "id"),
+				TextColumn(threadColumns, "t", "cwd"),
+				TextColumn(threadColumns, "t", "rollout_path", "session_path", "path"),
+				TextColumn(threadColumns, "t", "title", "name", "first_user_message", "preview"),
+				TextColumn(threadColumns, "t", "source", "source_kind"),
+				TextColumn(threadColumns, "t", "thread_source"),
+				NumericColumn(threadColumns, "t", "archived"),
+				UpdatedAtMilliseconds(threadColumns, "t"),
+				ParentThreadId(threadColumns, edgeColumns),
+				HistoryMode(threadColumns, "t")
+			}) + " from [threads] t";
+			if (sqlite3_prepare_v2(db, Utf8(sql), -1, out statement, IntPtr.Zero) != SQLITE_OK)
 			{
 				throw new InvalidDataException("无法读取 Codex threads：" + Error(db));
 			}
-			List<DbThread> list = new List<DbThread>();
 			while (true)
 			{
 				switch (sqlite3_step(statement))
@@ -121,24 +143,26 @@ internal static class WinSqliteReader
 			}
 		}
 	}
-	private static bool ColumnExists(IntPtr db, string tableName, string columnName)
+	private static HashSet<string> ReadColumns(IntPtr db, string tableName)
 	{
+		HashSet<string> columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 		IntPtr statement = IntPtr.Zero;
 		try
 		{
 			string sql = "pragma table_info([" + (tableName ?? string.Empty).Replace("]", "]]") + "])";
 			if (sqlite3_prepare_v2(db, Utf8(sql), -1, out statement, IntPtr.Zero) != 0)
 			{
-				return false;
+				return columns;
 			}
 			while (sqlite3_step(statement) == SQLITE_ROW)
 			{
-				if (string.Equals(ColumnText(statement, 1), columnName, StringComparison.OrdinalIgnoreCase))
+				string name = ColumnText(statement, 1);
+				if (!string.IsNullOrWhiteSpace(name))
 				{
-					return true;
+					columns.Add(name);
 				}
 			}
-			return false;
+			return columns;
 		}
 		finally
 		{
@@ -147,6 +171,74 @@ internal static class WinSqliteReader
 				sqlite3_finalize(statement);
 			}
 		}
+	}
+
+	private static string TextColumn(ISet<string> columns, string alias, params string[] names)
+	{
+		List<string> candidates = new List<string>();
+		foreach (string name in names)
+		{
+			if (columns.Contains(name))
+			{
+				candidates.Add("nullif(" + alias + ".[" + name + "],'')");
+			}
+		}
+		return candidates.Count == 0
+			? "''"
+			: "coalesce(" + string.Join(",", candidates.ToArray()) + ",'')";
+	}
+
+	private static string NumericColumn(ISet<string> columns, string alias, string name)
+	{
+		return columns.Contains(name) ? "coalesce(" + alias + ".[" + name + "],0)" : "0";
+	}
+
+	private static string UpdatedAtMilliseconds(ISet<string> columns, string alias)
+	{
+		List<string> candidates = new List<string>();
+		AddTimestamp(candidates, columns, alias, "updated_at_ms", false);
+		AddTimestamp(candidates, columns, alias, "updated_at", true);
+		AddTimestamp(candidates, columns, alias, "recency_at_ms", false);
+		AddTimestamp(candidates, columns, alias, "recency_at", true);
+		AddTimestamp(candidates, columns, alias, "created_at_ms", false);
+		AddTimestamp(candidates, columns, alias, "created_at", true);
+		return candidates.Count == 0
+			? "0"
+			: "coalesce(" + string.Join(",", candidates.ToArray()) + ",0)";
+	}
+
+	private static void AddTimestamp(ICollection<string> output, ISet<string> columns,
+		string alias, string name, bool seconds)
+	{
+		if (!columns.Contains(name)) return;
+		string value = alias + ".[" + name + "]";
+		if (seconds) value = "(" + value + "*1000)";
+		output.Add("nullif(" + value + ",0)");
+	}
+
+	private static string ParentThreadId(ISet<string> threadColumns,
+		ISet<string> edgeColumns)
+	{
+		List<string> candidates = new List<string>();
+		if (threadColumns.Contains("parent_thread_id"))
+		{
+			candidates.Add("nullif(t.[parent_thread_id],'')");
+		}
+		if (edgeColumns.Contains("parent_thread_id") && edgeColumns.Contains("child_thread_id"))
+		{
+			candidates.Add("(select nullif(e.[parent_thread_id],'') from [thread_spawn_edges] e " +
+				"where e.[child_thread_id]=t.[id] limit 1)");
+		}
+		return candidates.Count == 0
+			? "''"
+			: "coalesce(" + string.Join(",", candidates.ToArray()) + ",'')";
+	}
+
+	private static string HistoryMode(ISet<string> columns, string alias)
+	{
+		return columns.Contains("history_mode")
+			? "coalesce(nullif(" + alias + ".[history_mode],''),'legacy')"
+			: "'legacy'";
 	}
 
 	private static byte[] Utf8(string value)

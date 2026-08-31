@@ -176,7 +176,7 @@ internal static class DeleteOptionsDialog
 
 internal static class SessionBatchDeleteDialog
 {
-	public static DeleteOptions Show(Window owner, ProjectGroup project, IList<SessionInfo> sessions)
+	public static DeleteOptions Show(Window owner, ProjectGroup project, IList<SessionInfo> sessions, string projectPath, bool allMainConversationsSelected, int totalMainConversationCount, string projectAvailabilityBlockReason)
 	{
 		if (project == null || sessions == null || sessions.Count == 0)
 		{
@@ -184,8 +184,12 @@ internal static class SessionBatchDeleteDialog
 		}
 		bool deletingSubagents = sessions.All((SessionInfo session) => session.IsSubagent);
 		string typeLabel = deletingSubagents ? "子代理" : "主对话";
-		string otherTypeLabel = deletingSubagents ? "主对话" : "子代理";
-		Window dialog = DialogUi.CreateWindow(owner, "删除所选" + typeLabel, 680.0, 500.0);
+		bool projectExists = !string.IsNullOrWhiteSpace(projectPath) && Directory.Exists(projectPath);
+		bool projectAvailable = !deletingSubagents && allMainConversationsSelected && projectExists && string.IsNullOrWhiteSpace(projectAvailabilityBlockReason);
+		Window dialog = DialogUi.CreateWindow(owner, "删除所选" + typeLabel, 700.0, deletingSubagents ? 520.0 : 670.0);
+		dialog.ResizeMode = ResizeMode.CanResize;
+		dialog.MinWidth = 620.0;
+		dialog.MinHeight = deletingSubagents ? 470.0 : 580.0;
 		Grid root = DialogUi.CreateRoot();
 		dialog.Content = root;
 		root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -194,19 +198,31 @@ internal static class SessionBatchDeleteDialog
 		root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
 		root.Children.Add(DialogUi.Text("删除已选择的" + typeLabel, 23.0, FontWeights.SemiBold, "#20231F"));
-		TextBlock context = DialogUi.Text(project.DisplayName + "\n" + sessions.Count + " 个" + typeLabel + " · 共 " + TextHelpers.FormatBytes(sessions.Sum((SessionInfo session) => session.SizeBytes)) + "\n" + project.ProjectPath, 12.0, FontWeights.Normal, "#646A63");
+		TextBlock context = DialogUi.Text(project.DisplayName + "\n" + sessions.Count + " 个" + typeLabel + " · 共 " + TextHelpers.FormatBytes(sessions.Sum((SessionInfo session) => session.SizeBytes)) + "\n" + projectPath, 12.0, FontWeights.Normal, "#646A63");
 		context.Margin = new Thickness(0.0, 8.0, 0.0, 16.0);
 		context.TextWrapping = TextWrapping.Wrap;
 		Grid.SetRow(context, 1);
 		root.Children.Add(context);
 
+		ScrollViewer optionScroller = new ScrollViewer
+		{
+			VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+			HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+		};
+		Grid.SetRow(optionScroller, 2);
+		root.Children.Add(optionScroller);
 		StackPanel options = new StackPanel();
-		Grid.SetRow(options, 2);
-		root.Children.Add(options);
+		optionScroller.Content = options;
+
+		GroupBox conversationGroup = DialogUi.Group("会话文件");
+		StackPanel conversationPanel = new StackPanel();
+		conversationGroup.Content = conversationPanel;
 		RadioButton moveToTrash = DialogUi.Radio("移入软件回收站（推荐）", "所选记录会逐个保留，可在本工具回收站中恢复或永久删除。", isChecked: true);
 		RadioButton permanent = DialogUi.Radio("永久删除所选", "立即删除所选" + typeLabel + " JSONL，之后无法从本工具恢复。", isChecked: false);
-		options.Children.Add(moveToTrash);
-		options.Children.Add(permanent);
+		conversationPanel.Children.Add(moveToTrash);
+		conversationPanel.Children.Add(permanent);
+		options.Children.Add(conversationGroup);
+
 		Border warning = new Border
 		{
 			Margin = new Thickness(0.0, 14.0, 0.0, 0.0),
@@ -215,9 +231,107 @@ internal static class SessionBatchDeleteDialog
 			BorderBrush = DialogUi.Brush("#ECD8B4"),
 			BorderThickness = new Thickness(1.0),
 			CornerRadius = new CornerRadius(10.0),
-			Child = DialogUi.Text("只处理已选择的" + typeLabel + "；未选择的" + typeLabel + "、全部" + otherTypeLabel + "和项目目录不会被删除。", 11.5, FontWeights.Normal, "#866426")
+			Child = DialogUi.Text(deletingSubagents
+				? "只处理已选择的子代理；未选择的子代理、全部主对话和项目目录不会被删除。"
+				: projectAvailable
+					? "已选中该项目全部主对话；可在下方选择是否同时处理项目目录。"
+					: allMainConversationsSelected
+						? "已选中全部主对话，但项目目录当前不可处理；具体原因见下方。"
+					: "只处理已选择的主对话；未选择的主对话、全部子代理和项目目录不会被删除。", 11.5, FontWeights.Normal, "#866426")
 		};
 		options.Children.Add(warning);
+
+		GroupBox projectGroup = DialogUi.Group("对应项目目录");
+		projectGroup.Margin = new Thickness(0.0, 14.0, 0.0, 0.0);
+		projectGroup.Visibility = deletingSubagents ? Visibility.Collapsed : Visibility.Visible;
+		options.Children.Add(projectGroup);
+		StackPanel projectPanel = new StackPanel();
+		projectGroup.Content = projectPanel;
+		CheckBox processProject = new CheckBox
+		{
+			Content = UiLanguage.T("同时处理该项目的目录"),
+			FontWeight = FontWeights.SemiBold,
+			Foreground = DialogUi.Brush("#30352F"),
+			IsEnabled = projectAvailable
+		};
+		projectPanel.Children.Add(processProject);
+
+		TextBlock pathText = DialogUi.Text(string.IsNullOrWhiteSpace(projectPath) ? "未记录项目路径" : projectPath, 11.5, FontWeights.Normal, "#777D76");
+		pathText.Margin = new Thickness(22.0, 7.0, 0.0, 0.0);
+		pathText.TextWrapping = TextWrapping.Wrap;
+		projectPanel.Children.Add(pathText);
+
+		string availabilityText;
+		if (!string.IsNullOrWhiteSpace(projectAvailabilityBlockReason))
+		{
+			availabilityText = projectAvailabilityBlockReason;
+		}
+		else if (projectAvailable)
+		{
+			availabilityText = UiLanguage.IsEnglish
+				? "All " + totalMainConversationCount + " main conversations in this project are selected. The project is processed only after every conversation operation succeeds."
+				: "已选中该项目全部 " + totalMainConversationCount + " 个主对话；只有全部会话处理成功后，才会处理项目目录。";
+		}
+		else if (!allMainConversationsSelected)
+		{
+			availabilityText = UiLanguage.IsEnglish
+				? "Select all " + totalMainConversationCount + " main conversations in this project to enable project processing. Clear the search to reveal hidden items."
+				: "需选中该项目全部 " + totalMainConversationCount + " 个主对话后，才能处理项目目录；如有搜索条件，请先清除以显示隐藏项。";
+		}
+		else
+		{
+			availabilityText = UiLanguage.IsEnglish
+				? "The recorded project folder does not exist, so it cannot be processed."
+				: "记录的项目目录不存在，当前不能处理。";
+		}
+		TextBlock availability = DialogUi.Text(availabilityText, 11.5, FontWeights.Normal, projectAvailable ? "#5D8F7F" : "#A15B18");
+		availability.Margin = new Thickness(22.0, 7.0, 0.0, 0.0);
+		availability.TextWrapping = TextWrapping.Wrap;
+		projectPanel.Children.Add(availability);
+
+		ComboBox projectMode = new ComboBox
+		{
+			Margin = new Thickness(22.0, 11.0, 0.0, 0.0),
+			Height = 40.0,
+			IsEnabled = false,
+			HorizontalContentAlignment = HorizontalAlignment.Stretch
+		};
+		projectMode.Items.Add(new ComboBoxItem { Content = UiLanguage.T("移入 Windows 回收站（可恢复）"), Tag = ProjectDeleteMode.RecycleBin });
+		projectMode.Items.Add(new ComboBoxItem { Content = UiLanguage.T("永久删除项目目录（不可恢复）"), Tag = ProjectDeleteMode.Permanent });
+		projectMode.SelectedIndex = 0;
+		projectPanel.Children.Add(projectMode);
+
+		string projectName = DeleteOptionsDialog.SafeDirectoryName(projectPath);
+		StackPanel typedPanel = new StackPanel
+		{
+			Margin = new Thickness(22.0, 10.0, 0.0, 0.0),
+			Visibility = Visibility.Collapsed
+		};
+		typedPanel.Children.Add(DialogUi.Text("请输入项目文件夹名 “" + projectName + "” 以确认永久删除：", 11.5, FontWeights.Normal, "#9D403B"));
+		TextBox typedConfirmation = new TextBox
+		{
+			Height = 36.0,
+			Margin = new Thickness(0.0, 6.0, 0.0, 0.0),
+			Padding = new Thickness(11.0, 0.0, 11.0, 0.0)
+		};
+		typedPanel.Children.Add(typedConfirmation);
+		projectPanel.Children.Add(typedPanel);
+
+		processProject.Checked += delegate
+		{
+			projectMode.IsEnabled = true;
+			typedPanel.Visibility = DeleteOptionsDialog.SelectedProjectMode(projectMode) == ProjectDeleteMode.Permanent ? Visibility.Visible : Visibility.Collapsed;
+		};
+		processProject.Unchecked += delegate
+		{
+			projectMode.IsEnabled = false;
+			typedPanel.Visibility = Visibility.Collapsed;
+			typedConfirmation.Text = string.Empty;
+		};
+		projectMode.SelectionChanged += delegate
+		{
+			typedPanel.Visibility = projectMode.IsEnabled && DeleteOptionsDialog.SelectedProjectMode(projectMode) == ProjectDeleteMode.Permanent ? Visibility.Visible : Visibility.Collapsed;
+		};
 
 		StackPanel buttons = DialogUi.ButtonBar();
 		Grid.SetRow(buttons, 3);
@@ -232,10 +346,21 @@ internal static class SessionBatchDeleteDialog
 		DeleteOptions result = null;
 		confirm.Click += delegate
 		{
+			ProjectDeleteMode selectedProjectMode = ProjectDeleteMode.None;
+			if (processProject.IsChecked == true)
+			{
+				selectedProjectMode = DeleteOptionsDialog.SelectedProjectMode(projectMode);
+				if (selectedProjectMode == ProjectDeleteMode.Permanent && !string.Equals((typedConfirmation.Text ?? string.Empty).Trim(), projectName, StringComparison.OrdinalIgnoreCase))
+				{
+					AppDialog.Show(dialog, "确认项目永久删除", "项目名称不匹配", "项目文件夹名输入不正确，未执行删除。请重新输入后再继续。", AppDialogTone.Warning, "重新输入");
+					typedConfirmation.Focus();
+					return;
+				}
+			}
 			result = new DeleteOptions
 			{
 				ConversationMode = permanent.IsChecked == true ? ConversationDeleteMode.Permanent : ConversationDeleteMode.MoveToTrash,
-				ProjectMode = ProjectDeleteMode.None
+				ProjectMode = selectedProjectMode
 			};
 			dialog.DialogResult = true;
 		};
@@ -437,7 +562,7 @@ internal static class DialogUi
 		}
 		dialog.Resources.MergedDictionaries.Add(new ResourceDictionary
 		{
-			Source = new Uri("/CodexConversationMigrator;component/CodexConversationMigrator/DialogTheme.xaml", UriKind.Relative)
+			Source = new Uri("/CodexConversationMigrator;component/DialogTheme.xaml", UriKind.Relative)
 		});
 		return dialog;
 	}

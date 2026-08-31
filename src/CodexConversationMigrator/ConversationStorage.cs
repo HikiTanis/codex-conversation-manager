@@ -64,7 +64,7 @@ internal static class ConversationStorage
 			}
 			foreach (DeletionTarget target in targets)
 			{
-				CctBackupMaintenance.DeleteForThread(codexHome, target.Session.ThreadId, target.SourcePath);
+				ImportSnapshotMaintenance.DeleteForThread(codexHome, target.Session.ThreadId, target.SourcePath);
 			}
 			ThreadIndexRemovalResult indexRemoval;
 			DesktopCatalogRemovalResult catalogRemoval;
@@ -139,7 +139,7 @@ internal static class ConversationStorage
 		CodexAppServerThreadDeletion.DeleteThread(codexHome, session.ThreadId);
 		foreach (DeletionTarget target in targets)
 		{
-			CctBackupMaintenance.DeleteForThread(codexHome, target.Session.ThreadId, target.SourcePath);
+			ImportSnapshotMaintenance.DeleteForThread(codexHome, target.Session.ThreadId, target.SourcePath);
 		}
 		RemoveThreadVisibility(codexHome, targets.Select((DeletionTarget target) => target.Session.ThreadId), out _, out _, out _);
 		foreach (DeletionTarget target in targets)
@@ -297,7 +297,7 @@ internal static class ConversationStorage
 		}
 		string codexHome = CodexCatalog.ResolveCodexHome();
 		CodexDesktopProjectRegistry.EnsureImportCanWrite(codexHome);
-		CctBackupMaintenance.DeleteForThread(codexHome, item.ThreadId, item.OriginalPath);
+		ImportSnapshotMaintenance.DeleteForThread(codexHome, item.ThreadId, item.OriginalPath);
 		RemoveThreadVisibility(codexHome, item.ThreadId, out _, out _, out _);
 		string backupPath = ValidateTrashPath(item.BackupPath);
 		string sidecarPath = ValidateTrashPath(item.SidecarPath);
@@ -356,9 +356,9 @@ internal static class ConversationStorage
 		foreach (Environment.SpecialFolder folder in ProtectedSpecialFolders())
 		{
 			string protectedPath = Environment.GetFolderPath(folder);
-			if (!string.IsNullOrWhiteSpace(protectedPath) && string.Equals(TextHelpers.CanonicalPath(fullPath), TextHelpers.CanonicalPath(protectedPath), StringComparison.OrdinalIgnoreCase))
+			if (!string.IsNullOrWhiteSpace(protectedPath) && TextHelpers.IsWithin(protectedPath, fullPath))
 			{
-				throw new InvalidOperationException("安全校验失败：不能删除系统或用户根目录：\n" + fullPath);
+				throw new InvalidOperationException("安全校验失败：不能删除系统、用户目录或包含这些目录的上级目录：\n" + fullPath);
 			}
 		}
 		string codexHome = Path.GetFullPath(CodexCatalog.ResolveCodexHome());
@@ -580,7 +580,7 @@ internal static class ConversationStorage
 				{
 					return string.Empty;
 				}
-				Dictionary<string, object> root = CctRunner.NewSerializer().DeserializeObject(firstLine) as Dictionary<string, object>;
+				Dictionary<string, object> root = JsonSerialization.NewSerializer().DeserializeObject(firstLine) as Dictionary<string, object>;
 				Dictionary<string, object> payload = root != null && root.ContainsKey("payload") ? root["payload"] as Dictionary<string, object> : null;
 				return NormalizeOptionalPath(Value(payload, "cwd"));
 			}
@@ -593,7 +593,7 @@ internal static class ConversationStorage
 
 	private static Dictionary<string, object> ReadMetadata(string path)
 	{
-		Dictionary<string, object> metadata = CctRunner.NewSerializer().DeserializeObject(File.ReadAllText(path, Encoding.UTF8)) as Dictionary<string, object>;
+		Dictionary<string, object> metadata = JsonSerialization.NewSerializer().DeserializeObject(File.ReadAllText(path, Encoding.UTF8)) as Dictionary<string, object>;
 		if (metadata == null)
 		{
 			throw new InvalidDataException("删除信息文件格式无效。");
@@ -603,7 +603,7 @@ internal static class ConversationStorage
 
 	private static void WriteMetadata(string path, Dictionary<string, object> metadata)
 	{
-		File.WriteAllText(path, CctRunner.NewSerializer().Serialize(metadata), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+		File.WriteAllText(path, JsonSerialization.NewSerializer().Serialize(metadata), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 	}
 
 	private static string Value(Dictionary<string, object> source, string key)

@@ -7,7 +7,7 @@ internal static class UiEnglishCatalog2
 {
 	public static readonly Dictionary<string, string> Entries = new Dictionary<string, string>(StringComparer.Ordinal)
 	{
-		{ " · 旧版快照已转入回收站 ", " · legacy snapshots moved to trash: " },
+		{ " · 遗留事务快照已转入回收站 ", " · leftover transaction snapshots moved to trash: " },
 		{ " 个，清理重复 ", "; duplicates removed: " },
 		{ " · 跳过 ", " · skipped " },
 		{ " 个项目＋对话", " projects + conversations" },
@@ -67,9 +67,7 @@ internal static class UiEnglishCatalog2
 		{ "检测到 {0} 个同 ID 任务登记在旧项目路径；本次将保留原任务 ID，并只更新这些任务的索引。", "Detected {0} same-ID conversations registered to the old project path. This import will retain their original IDs and update only their index entries." },
 		{ "检测到 {0} 个同 ID 任务登记在旧项目路径；本次将为迁入版本生成新 ID，并只登记新任务。", "Detected {0} same-ID conversations registered to the old project path. This import will create new IDs for imported versions and register only the new conversations." },
 		{ "检测到 {pathMismatchCount} 个任务的原 ID 仍登记在旧项目路径。", "Detected {pathMismatchCount} conversations whose original IDs are still registered to the old project path." },
-		{ "仅使用“智能合并”时，cwd 路径变化会被 cct 当成冲突。本次需要改为“迁移包为准”：覆盖同 ID 的本机旧文件，同时自动保留备份。", "With Smart merge, cct treats a changed cwd as a conflict. This operation must use Package wins: overwrite local old files with the same ID while keeping automatic backups." },
 		{ "路径迁移需要保留原 ID", "Path migration requires retaining original IDs" },
-		{ "路径迁移已切换为“迁移包为准”，本机旧文件将由 cct 自动备份。", "Path migration switched to Package wins; cct will automatically back up local old files." },
 		{ "正式导入时会保留原 ID、备份本机旧文件，并只更新本次任务索引。", "The import will retain original IDs, back up local old files, and update only index entries from this operation." },
 		{ "正式导入时会为迁入版本生成新 ID，保留本机旧文件，并只登记新任务。", "The import will create new IDs for imported versions, preserve local old files, and register only new conversations." },
 

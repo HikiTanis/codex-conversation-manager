@@ -16,6 +16,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Markup;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using Microsoft.Win32;
 
@@ -47,13 +48,22 @@ internal sealed class MainWindowController
 		public ProjectRestoreResult RestoreResult { get; set; }
 	}
 
+	private sealed class ConversationNavigationItem
+	{
+		public int MessageIndex { get; set; }
+
+		public ConversationMessage UserMessage { get; set; }
+
+		public ConversationMessage ResponseMessage { get; set; }
+
+		public System.Windows.Controls.Button Button { get; set; }
+
+		public Border Marker { get; set; }
+	}
+
 	private readonly Window window;
 
-	private readonly System.Windows.Controls.TextBox cctPathBox;
-
 	private readonly System.Windows.Controls.TextBox backupFolderBox;
-
-	private readonly TextBlock cctStatusText;
 
 	private readonly System.Windows.Controls.RadioButton projectBackupModeRadio;
 
@@ -82,8 +92,6 @@ internal sealed class MainWindowController
 	private readonly System.Windows.Controls.RadioButton mainSessionsTabRadio;
 
 	private readonly System.Windows.Controls.RadioButton subagentSessionsTabRadio;
-
-	private readonly System.Windows.Controls.CheckBox fullFidelityCheck;
 
 	private readonly TextBlock projectTitleText;
 
@@ -126,8 +134,6 @@ internal sealed class MainWindowController
 	private readonly System.Windows.Controls.Button refreshButton;
 
 	private readonly System.Windows.Controls.Button trashButton;
-
-	private readonly System.Windows.Controls.Button browseCctButton;
 
 	private readonly System.Windows.Controls.Button browseBackupFolderButton;
 
@@ -202,6 +208,18 @@ internal sealed class MainWindowController
 
 	private readonly System.Windows.Controls.ListBox conversationList;
 
+	private readonly Border conversationNavigationHost;
+
+	private readonly ScrollViewer conversationNavigationScroller;
+
+	private readonly StackPanel conversationNavigationRail;
+
+	private readonly Popup conversationNavigationPreviewPopup;
+
+	private readonly TextBlock conversationNavigationPreviewTitle;
+
+	private readonly TextBlock conversationNavigationPreviewResponse;
+
 	private readonly Canvas conversationCanvas;
 
 	private readonly FrameworkElement conversationDialogHost;
@@ -241,11 +259,31 @@ internal sealed class MainWindowController
 	private DateTime importStartedAt;
 
 
-	private bool projectBackupMode = true;
+	private bool projectBackupMode;
 
 	private bool showSubagentSessions;
 
 	private string previewedThreadId = string.Empty;
+
+	private IList<ConversationMessage> previewMessages = Array.Empty<ConversationMessage>();
+
+	private ScrollViewer conversationScrollViewer;
+
+	private int activeConversationMessageIndex = -1;
+
+	private readonly List<ConversationNavigationItem> conversationNavigationItems = new List<ConversationNavigationItem>();
+
+	private int activeConversationNavigationIndex = -1;
+
+	private bool conversationNavigationScrubbing;
+
+	private bool conversationNavigationMoved;
+
+	private Point conversationNavigationPressPoint;
+
+	private ConversationNavigationItem conversationNavigationPressedItem;
+
+	private int conversationPreviewRequestVersion;
 
 	private bool conversationDialogInitialized;
 
@@ -263,9 +301,13 @@ internal sealed class MainWindowController
 
 	private double conversationRestoreTop;
 
-	private double conversationRestoreWidth = 940.0;
+	private double conversationRestoreWidth = 1180.0;
 
-	private double conversationRestoreHeight = 650.0;
+	private double conversationRestoreHeight = 720.0;
+
+	private double conversationCanvasWidth;
+
+	private double conversationCanvasHeight;
 
 	private readonly TaskCompletionSource<bool> initialLoadCompletion = new TaskCompletionSource<bool>();
 
@@ -276,7 +318,7 @@ internal sealed class MainWindowController
 	[DllImport("dwmapi.dll")]
 	private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
-	public MainWindowController(string preferredCct)
+	public MainWindowController()
 	{
 		string text = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CodexConversationMigrator.xaml");
 		if (!File.Exists(text))
@@ -287,9 +329,7 @@ internal sealed class MainWindowController
 		window = (Window)XamlReader.Parse(localizedXaml);
 		window.MinWidth = UiLanguage.IsEnglish ? 1040.0 : 900.0;
 		window.Tag = this;
-		cctPathBox = Find<System.Windows.Controls.TextBox>("CctPathBox");
 		backupFolderBox = Find<System.Windows.Controls.TextBox>("BackupFolderBox");
-		cctStatusText = Find<TextBlock>("CctStatusText");
 		projectBackupModeRadio = Find<System.Windows.Controls.RadioButton>("ProjectBackupModeRadio");
 		conversationBackupModeRadio = Find<System.Windows.Controls.RadioButton>("ConversationBackupModeRadio");
 		backupModeHelpText = Find<TextBlock>("BackupModeHelpText");
@@ -304,7 +344,6 @@ internal sealed class MainWindowController
 		searchBox = Find<System.Windows.Controls.TextBox>("SearchBox");
 		mainSessionsTabRadio = Find<System.Windows.Controls.RadioButton>("MainSessionsTabRadio");
 		subagentSessionsTabRadio = Find<System.Windows.Controls.RadioButton>("SubagentSessionsTabRadio");
-		fullFidelityCheck = Find<System.Windows.Controls.CheckBox>("FullFidelityCheck");
 		projectTitleText = Find<TextBlock>("ProjectTitleText");
 		projectPathText = Find<TextBlock>("ProjectPathText");
 		projectMetaText = Find<TextBlock>("ProjectMetaText");
@@ -324,7 +363,6 @@ internal sealed class MainWindowController
 		importTabButton = Find<System.Windows.Controls.Button>("ImportTabButton");
 		refreshButton = Find<System.Windows.Controls.Button>("RefreshButton");
 		trashButton = Find<System.Windows.Controls.Button>("TrashButton");
-		browseCctButton = Find<System.Windows.Controls.Button>("BrowseCctButton");
 		browseBackupFolderButton = Find<System.Windows.Controls.Button>("BrowseBackupFolderButton");
 		selectAllProjectsButton = Find<System.Windows.Controls.Button>("SelectAllProjectsButton");
 		languageButton = Find<System.Windows.Controls.Button>("LanguageButton");
@@ -363,6 +401,12 @@ internal sealed class MainWindowController
 		conversationTitleText = Find<TextBlock>("ConversationTitleText");
 		conversationMetaText = Find<TextBlock>("ConversationMetaText");
 		conversationList = Find<System.Windows.Controls.ListBox>("ConversationList");
+		conversationNavigationHost = Find<Border>("ConversationNavigationHost");
+		conversationNavigationScroller = Find<ScrollViewer>("ConversationNavigationScroller");
+		conversationNavigationRail = Find<StackPanel>("ConversationNavigationRail");
+		conversationNavigationPreviewPopup = Find<Popup>("ConversationNavigationPreviewPopup");
+		conversationNavigationPreviewTitle = Find<TextBlock>("ConversationNavigationPreviewTitle");
+		conversationNavigationPreviewResponse = Find<TextBlock>("ConversationNavigationPreviewResponse");
 		conversationCanvas = Find<Canvas>("ConversationCanvas");
 		conversationDialogHost = Find<FrameworkElement>("ConversationDialogHost");
 		conversationHeader = Find<Border>("ConversationHeader");
@@ -374,7 +418,6 @@ internal sealed class MainWindowController
 		restoreGlyph = Find<FrameworkElement>("RestoreGlyph");
 		conversationMaximizeGlyph = Find<FrameworkElement>("ConversationMaximizeGlyph");
 		conversationRestoreGlyph = Find<FrameworkElement>("ConversationRestoreGlyph");
-		cctPathBox.Text = CctRunner.ResolveCctPath(preferredCct);
 		backupFolderBox.Text = DefaultBackupFolder();
 		languageButton.Content = UiLanguage.IsEnglish ? "中文" : "EN";
 		languageButton.ToolTip = UiLanguage.IsEnglish ? "Switch to Chinese" : "切换到英文";
@@ -408,6 +451,17 @@ internal sealed class MainWindowController
 		return visible.Count > 0 && visible.All((SessionInfo session) => session.IsSubagent) && visible.All((SessionInfo session) => !string.IsNullOrWhiteSpace(session.DisplayPath) && session.SizeBytes > 0L);
 	}
 
+	public bool IsConversationBackupDefaultForTest()
+	{
+		return conversationBackupModeRadio.IsChecked == true &&
+			projectBackupModeRadio.IsChecked != true &&
+			!projectBackupMode &&
+			backupSelectedButton.Visibility == Visibility.Visible &&
+			backupProjectFilesButton.Visibility == Visibility.Collapsed &&
+			projectSelectionTools.Visibility == Visibility.Collapsed &&
+			string.Equals(Convert.ToString(projectList.Tag), "Conversation", StringComparison.Ordinal);
+	}
+
 	public bool ShowMainSessionViewForTest(string displayName)
 	{
 		if (!SelectProjectForTest(displayName))
@@ -422,7 +476,24 @@ internal sealed class MainWindowController
 
 	public bool TestMainSelectionToggleForTest()
 	{
-		return !showSubagentSessions && TestCurrentSessionSelectionToggleForTest();
+		if (showSubagentSessions || !TestCurrentSessionSelectionToggleForTest())
+		{
+			return false;
+		}
+		List<SessionInfo> sessions = CurrentSessionTypeItems();
+		foreach (SessionInfo session in sessions)
+		{
+			session.IsSelected = false;
+		}
+		UpdateSessionSelectionControls();
+		ToggleSessionSelection();
+		string projectFolderTerm = UiLanguage.IsEnglish ? "project folder" : "项目目录";
+		bool projectOptionAdvertised = sessions.Count > 0 &&
+			sessions.All((SessionInfo session) => session.IsSelected) &&
+			(sessionModeHint.Text ?? string.Empty).IndexOf(projectFolderTerm, StringComparison.OrdinalIgnoreCase) >= 0 &&
+			(Convert.ToString(deleteSelectedSessionsButton.ToolTip) ?? string.Empty).IndexOf(projectFolderTerm, StringComparison.OrdinalIgnoreCase) >= 0;
+		ToggleSessionSelection();
+		return projectOptionAdvertised;
 	}
 
 	public bool TestSubagentSelectionToggleForTest()
@@ -533,6 +604,7 @@ internal sealed class MainWindowController
 		{
 			if (conversationOverlay.Visibility == Visibility.Visible && conversationList.ItemsSource != null && (conversationMetaText.Text ?? string.Empty).IndexOf(UiLanguage.IsEnglish ? "Loading" : "正在", StringComparison.OrdinalIgnoreCase) < 0)
 			{
+				await window.Dispatcher.InvokeAsync(delegate { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
 				return true;
 			}
 			await Task.Delay(50);
@@ -728,6 +800,56 @@ internal sealed class MainWindowController
 		return false;
 	}
 
+	public bool TestLongConversationPreviewForTest()
+	{
+		if (conversationOverlay.Visibility != Visibility.Visible || previewMessages.Count <= 1200)
+		{
+			return false;
+		}
+		conversationList.UpdateLayout();
+		InitializeConversationDialog();
+		conversationScrollViewer = ResolveConversationScrollViewer();
+		bool startsAtLatest = conversationScrollViewer != null &&
+			conversationScrollViewer.ScrollableHeight > 0.0 &&
+			conversationScrollViewer.VerticalOffset >= conversationScrollViewer.ScrollableHeight - 1.0 &&
+			activeConversationMessageIndex == previewMessages.Count - 1;
+		bool nearMainWindowSize = conversationCanvas.ActualWidth <= 0.0 ||
+			(conversationDialogHost.ActualWidth >= conversationCanvas.ActualWidth - 64.0 &&
+			 conversationDialogHost.ActualHeight >= conversationCanvas.ActualHeight - 64.0);
+		int expectedUserMessages = previewMessages.Count((ConversationMessage message) => message.IsUser && !message.IsNotice);
+		bool railVisible = conversationNavigationHost.Visibility == Visibility.Visible &&
+			conversationNavigationItems.Count == expectedUserMessages &&
+			activeConversationNavigationIndex == conversationNavigationItems.Count - 1;
+		bool pixelScrolling = VirtualizingPanel.GetScrollUnit(conversationList) == ScrollUnit.Pixel;
+		ScrollConversationToIndex(0, alignToEnd: false);
+		conversationList.UpdateLayout();
+		conversationScrollViewer = ResolveConversationScrollViewer();
+		bool reachedFirst = conversationScrollViewer != null && conversationScrollViewer.VerticalOffset <= 1.0 && activeConversationMessageIndex == 0;
+		ScrollConversationToIndex(previewMessages.Count - 1, alignToEnd: true);
+		conversationList.UpdateLayout();
+		conversationScrollViewer = ResolveConversationScrollViewer();
+		bool returnedToLatest = conversationScrollViewer != null &&
+			conversationScrollViewer.VerticalOffset >= conversationScrollViewer.ScrollableHeight - 1.0 &&
+			activeConversationMessageIndex == previewMessages.Count - 1;
+		return startsAtLatest && nearMainWindowSize && railVisible && pixelScrolling && reachedFirst && returnedToLatest;
+	}
+
+	public bool ShowConversationNavigationPreviewForTest()
+	{
+		if (conversationOverlay.Visibility != Visibility.Visible || conversationNavigationItems.Count < 4)
+		{
+			return false;
+		}
+		int index = Math.Max(0, Math.Min(conversationNavigationItems.Count - 1, activeConversationNavigationIndex));
+		EnsureConversationNavigationItemVisible(index);
+		ExpandConversationNavigationAround(index);
+		ShowConversationNavigationPreview(conversationNavigationItems[index]);
+		conversationNavigationRail.UpdateLayout();
+		return conversationNavigationPreviewPopup.IsOpen &&
+			(double)conversationNavigationItems[index].Marker.GetAnimationBaseValue(FrameworkElement.WidthProperty) >= 25.0 &&
+			!string.IsNullOrWhiteSpace(conversationNavigationPreviewTitle.Text);
+	}
+
 	public bool ResizeConversationDialogForTest()
 	{
 		if (conversationOverlay.Visibility != Visibility.Visible)
@@ -748,6 +870,42 @@ internal sealed class MainWindowController
 			return conversationDialogHost.ActualHeight > actualHeight + 25.0;
 		}
 		return false;
+	}
+
+	public bool TestConversationFollowsWindowResizeForTest()
+	{
+		if (conversationOverlay.Visibility != Visibility.Visible || window.WindowState != WindowState.Normal)
+		{
+			return false;
+		}
+		InitializeConversationDialog();
+		if (conversationDialogMaximized)
+		{
+			ToggleConversationDialogMaximize();
+		}
+		double originalWindowWidth = window.Width;
+		double originalWindowHeight = window.Height;
+		double originalCanvasWidth = conversationCanvas.ActualWidth;
+		double originalCanvasHeight = conversationCanvas.ActualHeight;
+		double originalDialogWidth = conversationDialogHost.ActualWidth;
+		double originalDialogHeight = conversationDialogHost.ActualHeight;
+		window.Width = originalWindowWidth + 140.0;
+		window.Height = originalWindowHeight + 100.0;
+		window.UpdateLayout();
+		conversationOverlay.UpdateLayout();
+		bool expanded = conversationCanvas.ActualWidth > originalCanvasWidth + 100.0 &&
+			conversationCanvas.ActualHeight > originalCanvasHeight + 70.0 &&
+			conversationDialogHost.ActualWidth > originalDialogWidth + 80.0 &&
+			conversationDialogHost.ActualHeight > originalDialogHeight + 60.0;
+		window.Width = originalWindowWidth;
+		window.Height = originalWindowHeight;
+		window.UpdateLayout();
+		conversationOverlay.UpdateLayout();
+		bool restored = Math.Abs(conversationCanvas.ActualWidth - originalCanvasWidth) <= 2.0 &&
+			Math.Abs(conversationCanvas.ActualHeight - originalCanvasHeight) <= 2.0 &&
+			Math.Abs(conversationDialogHost.ActualWidth - originalDialogWidth) <= 3.0 &&
+			Math.Abs(conversationDialogHost.ActualHeight - originalDialogHeight) <= 3.0;
+		return expanded && restored;
 	}
 
 	public bool MaximizeConversationForTest()
@@ -813,6 +971,10 @@ internal sealed class MainWindowController
 			SetStatus("当前操作尚未完成，请等待完成后再关闭。", error: false);
 			AppDialog.Show(window, "操作进行中", "暂时不能关闭窗口", "当前正在写入或校验本地数据。完成后即可安全关闭。", AppDialogTone.Warning, "继续等待");
 		};
+		window.Closed += delegate
+		{
+			InvalidateConversationPreviewRequests();
+		};
 		closeButton.Click += delegate
 		{
 			window.Close();
@@ -852,10 +1014,6 @@ internal sealed class MainWindowController
 		languageButton.Click += delegate
 		{
 			SwitchLanguage();
-		};
-		browseCctButton.Click += async delegate
-		{
-			await BrowseCctAsync();
 		};
 		browseBackupFolderButton.Click += delegate
 		{
@@ -971,10 +1129,32 @@ internal sealed class MainWindowController
 		{
 			conversationHeaderDragging = false;
 		};
-		conversationCanvas.SizeChanged += delegate
+		conversationCanvas.SizeChanged += ConversationCanvasSizeChanged;
+		conversationNavigationHost.MouseLeave += delegate
 		{
-			EnsureConversationDialogFits();
+			if (!conversationNavigationScrubbing)
+			{
+				CloseConversationNavigationPreview();
+				ExpandConversationNavigationAround(-1);
+			}
 		};
+		conversationNavigationHost.LostKeyboardFocus += delegate
+		{
+			if (!conversationNavigationHost.IsKeyboardFocusWithin && !conversationNavigationScrubbing)
+			{
+				CloseConversationNavigationPreview();
+				ExpandConversationNavigationAround(-1);
+			}
+		};
+		conversationNavigationRail.MouseMove += ConversationNavigationRailMouseMove;
+		conversationNavigationRail.MouseLeftButtonUp += ConversationNavigationRailMouseLeftButtonUp;
+		conversationNavigationRail.LostMouseCapture += delegate
+		{
+			conversationNavigationScrubbing = false;
+			conversationNavigationMoved = false;
+			conversationNavigationPressedItem = null;
+		};
+		conversationList.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(ConversationListScrollChanged));
 		WireConversationResizeThumb("ConversationResizeLeft", -1, 0);
 		WireConversationResizeThumb("ConversationResizeRight", 1, 0);
 		WireConversationResizeThumb("ConversationResizeTop", 0, -1);
@@ -1036,7 +1216,7 @@ internal sealed class MainWindowController
 		UiLanguage.SetAndSave(UiLanguage.IsEnglish ? AppLanguage.Chinese : AppLanguage.English);
 		try
 		{
-			MainWindowController replacementController = new MainWindowController(cctPathBox.Text);
+			MainWindowController replacementController = new MainWindowController();
 			Window replacement = replacementController.Window;
 			replacement.Width = window.ActualWidth > 0.0 ? window.ActualWidth : window.Width;
 			replacement.Height = window.ActualHeight > 0.0 ? window.ActualHeight : window.Height;
@@ -1135,8 +1315,44 @@ internal sealed class MainWindowController
 		{
 			conversationHeaderDragging = false;
 			conversationHeader.ReleaseMouseCapture();
+			RememberConversationRestoreBounds();
 			e.Handled = true;
 		}
+	}
+
+	private void ConversationCanvasSizeChanged(object sender, SizeChangedEventArgs e)
+	{
+		double newWidth = e.NewSize.Width;
+		double newHeight = e.NewSize.Height;
+		double oldWidth = conversationCanvasWidth > 0.0 ? conversationCanvasWidth : e.PreviousSize.Width;
+		double oldHeight = conversationCanvasHeight > 0.0 ? conversationCanvasHeight : e.PreviousSize.Height;
+		conversationCanvasWidth = newWidth;
+		conversationCanvasHeight = newHeight;
+		if (!conversationDialogInitialized || newWidth <= 0.0 || newHeight <= 0.0)
+		{
+			return;
+		}
+		if (oldWidth <= 0.0 || oldHeight <= 0.0)
+		{
+			EnsureConversationDialogFits();
+			return;
+		}
+		double widthScale = newWidth / oldWidth;
+		double heightScale = newHeight / oldHeight;
+		if (conversationDialogMaximized)
+		{
+			ScaleConversationRestoreBounds(widthScale, heightScale, newWidth, newHeight);
+			EnsureConversationDialogFits();
+			return;
+		}
+		double width = conversationDialogHost.ActualWidth > 0.0 ? conversationDialogHost.ActualWidth : conversationDialogHost.Width;
+		double height = conversationDialogHost.ActualHeight > 0.0 ? conversationDialogHost.ActualHeight : conversationDialogHost.Height;
+		conversationDialogHost.Width = Clamp(width * widthScale, conversationDialogHost.MinWidth, Math.Max(conversationDialogHost.MinWidth, newWidth - 8.0));
+		conversationDialogHost.Height = Clamp(height * heightScale, conversationDialogHost.MinHeight, Math.Max(conversationDialogHost.MinHeight, newHeight - 8.0));
+		Canvas.SetLeft(conversationDialogHost, DialogLeft() * widthScale);
+		Canvas.SetTop(conversationDialogHost, DialogTop() * heightScale);
+		EnsureConversationDialogFits();
+		RememberConversationRestoreBounds();
 	}
 
 	private void InitializeConversationDialog()
@@ -1144,11 +1360,17 @@ internal sealed class MainWindowController
 		conversationOverlay.UpdateLayout();
 		if (!(conversationCanvas.ActualWidth <= 0.0) && !(conversationCanvas.ActualHeight <= 0.0))
 		{
+			conversationCanvasWidth = conversationCanvas.ActualWidth;
+			conversationCanvasHeight = conversationCanvas.ActualHeight;
 			if (!conversationDialogInitialized)
 			{
-				conversationDialogHost.Width = Math.Min(940.0, Math.Max(conversationDialogHost.MinWidth, conversationCanvas.ActualWidth - 56.0));
-				conversationDialogHost.Height = Math.Min(650.0, Math.Max(conversationDialogHost.MinHeight, conversationCanvas.ActualHeight - 56.0));
+				conversationDialogHost.Width = Math.Max(conversationDialogHost.MinWidth, conversationCanvas.ActualWidth - 56.0);
+				conversationDialogHost.Height = Math.Max(conversationDialogHost.MinHeight, conversationCanvas.ActualHeight - 56.0);
 				CenterConversationDialog();
+				conversationRestoreLeft = DialogLeft();
+				conversationRestoreTop = DialogTop();
+				conversationRestoreWidth = conversationDialogHost.Width;
+				conversationRestoreHeight = conversationDialogHost.Height;
 				conversationDialogInitialized = true;
 			}
 			EnsureConversationDialogFits();
@@ -1228,6 +1450,29 @@ internal sealed class MainWindowController
 		conversationDialogHost.Height = num4;
 		Canvas.SetLeft(conversationDialogHost, num);
 		Canvas.SetTop(conversationDialogHost, num2);
+		RememberConversationRestoreBounds();
+	}
+
+	private void RememberConversationRestoreBounds()
+	{
+		if (!conversationDialogInitialized || conversationDialogMaximized)
+		{
+			return;
+		}
+		conversationRestoreLeft = DialogLeft();
+		conversationRestoreTop = DialogTop();
+		conversationRestoreWidth = conversationDialogHost.ActualWidth > 0.0 ? conversationDialogHost.ActualWidth : conversationDialogHost.Width;
+		conversationRestoreHeight = conversationDialogHost.ActualHeight > 0.0 ? conversationDialogHost.ActualHeight : conversationDialogHost.Height;
+	}
+
+	private void ScaleConversationRestoreBounds(double widthScale, double heightScale, double canvasWidth, double canvasHeight)
+	{
+		conversationRestoreLeft *= widthScale;
+		conversationRestoreTop *= heightScale;
+		conversationRestoreWidth = Clamp(conversationRestoreWidth * widthScale, conversationDialogHost.MinWidth, Math.Max(conversationDialogHost.MinWidth, canvasWidth - 8.0));
+		conversationRestoreHeight = Clamp(conversationRestoreHeight * heightScale, conversationDialogHost.MinHeight, Math.Max(conversationDialogHost.MinHeight, canvasHeight - 8.0));
+		conversationRestoreLeft = Clamp(conversationRestoreLeft, 4.0, Math.Max(4.0, canvasWidth - conversationRestoreWidth - 4.0));
+		conversationRestoreTop = Clamp(conversationRestoreTop, 4.0, Math.Max(4.0, canvasHeight - conversationRestoreHeight - 4.0));
 	}
 
 	private void EnsureConversationDialogFits()
@@ -1313,15 +1558,6 @@ internal sealed class MainWindowController
 		{
 			return;
 		}
-		string path = CctRunner.ResolveCctPath(cctPathBox.Text.Trim());
-		if (string.IsNullOrWhiteSpace(path))
-		{
-			cctStatusText.Text = UiLanguage.T("未找到");
-			SetStatus("没有找到 cct.exe，请点击“浏览”选择。", error: true);
-			AppDialog.ShowCompat(window, "没有找到 cct.exe，请点击“浏览”选择它。", "需要 cct.exe", MessageBoxButton.OK, MessageBoxImage.Asterisk);
-			return;
-		}
-		cctPathBox.Text = path;
 		SetBusy(busy: true, "正在读取 Codex 本地索引与会话……");
 		try
 		{
@@ -1358,28 +1594,21 @@ internal sealed class MainWindowController
 				orphanDetectionError = string.IsNullOrWhiteSpace(orphanDetectionError) ? detectionError.Message : orphanDetectionError + "；" + detectionError.Message;
 				AppendLog("检测旧版删除的侧边栏残留失败：" + detectionError.Message);
 			}
-			LegacyCctBackupMigrationResult legacyBackups = new LegacyCctBackupMigrationResult();
-			if (Environment.GetEnvironmentVariable("CODEX_MIGRATOR_SKIP_LEGACY_CCT_MAINTENANCE") != "1")
+			OrphanedSnapshotCleanupResult orphanedSnapshots = new OrphanedSnapshotCleanupResult();
+			if (Environment.GetEnvironmentVariable("CODEX_MIGRATOR_SKIP_SNAPSHOT_MAINTENANCE") != "1" &&
+				Environment.GetEnvironmentVariable("CODEX_MIGRATOR_SKIP_LEGACY_CCT_MAINTENANCE") != "1")
 			{
 				try
 				{
-					legacyBackups = await Task.Run(() => CctBackupMaintenance.MoveLegacyBackupsToTrash(codexHome));
+					orphanedSnapshots = await Task.Run(() => ImportSnapshotMaintenance.MoveOrphanedSnapshotsToTrash(codexHome));
 				}
 				catch (Exception cleanupError)
 				{
-					AppendLog("整理旧版 cct 临时快照失败：" + cleanupError.Message);
+					AppendLog("整理遗留事务安全快照失败：" + cleanupError.Message);
 				}
 			}
-			Task<CctResult> versionTask = CctRunner.RunAsync(path, new string[1] { "--version" }, null);
-			Task<CctResult> listTask = CctRunner.RunAsync(path, new string[5] { "list", "--json", "--include-archived", "--codex-home", codexHome }, null);
-			await Task.WhenAll<CctResult>(versionTask, listTask);
-			CctResult list = listTask.Result;
-			if (list.ExitCode != 0)
-			{
-				throw new InvalidOperationException(CctRunner.FirstUseful(list));
-			}
-			List<SessionInfo> raw = CctRunner.ParseSessions(list.StdOut);
-			CatalogResult catalog = await Task.Run(() => CodexCatalog.Build(raw));
+			List<SessionInfo> raw = await Task.Run(() => NativeSessionCatalog.Scan(codexHome));
+			CatalogResult catalog = await Task.Run(() => CodexCatalog.Build(raw, codexHome));
 			projects = catalog.Projects;
 			foreach (ProjectGroup project in projects)
 			{
@@ -1400,9 +1629,7 @@ internal sealed class MainWindowController
 				sessionList.ItemsSource = null;
 			}
 			UpdateSelectedCount();
-			string version = (versionTask.Result.StdOut ?? string.Empty).Trim();
-			cctStatusText.Text = (string.IsNullOrWhiteSpace(version) ? UiLanguage.T("cct 已连接") : version);
-			string cleanupSummary = legacyBackups.MovedToTrashCount == 0 ? string.Empty : $" · 旧版快照已转入回收站 {legacyBackups.MovedToTrashCount} 个，清理重复 {legacyBackups.RedundantDeletedCount} 个";
+			string cleanupSummary = orphanedSnapshots.MovedToTrashCount == 0 ? string.Empty : $" · 遗留事务快照已转入回收站 {orphanedSnapshots.MovedToTrashCount} 个，清理重复 {orphanedSnapshots.RedundantDeletedCount} 个";
 			if (completedRepairCacheCleanup.RemovedCatalogEntryCount > 0 || completedRepairCacheCleanup.ClearedDirectoryCount > 0)
 			{
 				cleanupSummary += UiLanguage.IsEnglish
@@ -1557,7 +1784,6 @@ internal sealed class MainWindowController
 		}
 		catch (Exception ex)
 		{
-			cctStatusText.Text = UiLanguage.T("读取失败");
 			SetStatus("读取失败：" + ex.Message, error: true);
 			AppDialog.ShowCompat(window, ex.Message, "读取会话失败", MessageBoxButton.OK, MessageBoxImage.Hand);
 		}
@@ -1700,7 +1926,7 @@ internal sealed class MainWindowController
 		emptySessionsText.Text = UiLanguage.T(showSubagentSessions ? "此项目没有子代理对话" : "此项目没有符合条件的主对话");
 		if (selectedProject != null)
 		{
-			sessionModeHint.Text = UiLanguage.T(showSubagentSessions ? "勾选要处理的子代理，再使用右侧“删除所选”。" : "勾选要处理的主对话，再使用右侧“删除所选”；项目目录保持不变。");
+			sessionModeHint.Text = UiLanguage.T(showSubagentSessions ? "勾选要处理的子代理，再使用右侧“删除所选”。" : "勾选要处理的主对话；选中项目全部主对话后，可同时处理项目目录。");
 		}
 		RefreshSessionView();
 	}
@@ -1779,7 +2005,34 @@ internal sealed class MainWindowController
 		if (selectedProject != null)
 		{
 			string typeLabel = showSubagentSessions ? "子代理" : "主对话";
-			sessionModeHint.Text = UiLanguage.T("勾选要处理的" + typeLabel + " · 已选 " + selectedCount + "/" + sessions.Count + " 个；全部选中后再次点击“全不选”。");
+			List<SessionInfo> allTypeSessions = CurrentSessionTypeItems();
+			int totalSelected = allTypeSessions.Count((SessionInfo session) => session.IsSelected);
+			BatchProjectDeleteScope projectScope = showSubagentSessions ? null : BuildBatchProjectDeleteScope(selectedProject, sessions.Where((SessionInfo session) => session.IsSelected));
+			bool allProjectMainSelected = projectScope != null && projectScope.AllMainConversationsSelected && string.IsNullOrWhiteSpace(projectScope.AvailabilityBlockReason) && Directory.Exists(projectScope.ProjectPath);
+			bool allVisibleMainSelected = !showSubagentSessions && allTypeSessions.Count > 0 && sessions.Count == allTypeSessions.Count && totalSelected == allTypeSessions.Count;
+			if (allProjectMainSelected)
+			{
+				sessionModeHint.Text = UiLanguage.T("已选中该项目全部主对话；“删除所选”中可选择同时处理项目目录。");
+			}
+			else if (allVisibleMainSelected && projectScope != null && !string.IsNullOrWhiteSpace(projectScope.AvailabilityBlockReason))
+			{
+				sessionModeHint.Text = projectScope.AvailabilityBlockReason;
+			}
+			else if (allVisibleMainSelected && projectScope != null && !Directory.Exists(projectScope.ProjectPath))
+			{
+				sessionModeHint.Text = UiLanguage.IsEnglish ? "All main conversations are selected, but the recorded project folder does not exist." : "已选中全部主对话，但记录的项目目录不存在，不能同时处理项目目录。";
+			}
+			else
+			{
+				sessionModeHint.Text = UiLanguage.T("勾选要处理的" + typeLabel + " · 已选 " + totalSelected + "/" + allTypeSessions.Count + " 个；全部选中后再次点击“全不选”。");
+			}
+			deleteSelectedSessionsButton.ToolTip = showSubagentSessions
+				? UiLanguage.T("删除已勾选的子代理对话；项目目录保持不变")
+				: allProjectMainSelected
+					? UiLanguage.T("删除已勾选的全部主对话，并可选择同时处理项目目录")
+					: projectScope != null && !string.IsNullOrWhiteSpace(projectScope.AvailabilityBlockReason)
+						? projectScope.AvailabilityBlockReason
+						: UiLanguage.T("删除已勾选的主对话；选中该项目全部主对话后可同时处理项目目录");
 		}
 	}
 
@@ -1910,10 +2163,12 @@ internal sealed class MainWindowController
 		{
 			return;
 		}
-		previewedThreadId = session.ThreadId ?? string.Empty;
+		int requestVersion = unchecked(++conversationPreviewRequestVersion);
+		string requestedThreadId = session.ThreadId ?? string.Empty;
+		previewedThreadId = requestedThreadId;
 		conversationTitleText.Text = session.DisplayTitle;
 		conversationMetaText.Text = UiLanguage.T("正在读取本地会话……") + " · " + session.ShortId;
-		conversationList.ItemsSource = new ConversationMessage[1]
+		previewMessages = new ConversationMessage[1]
 		{
 			new ConversationMessage
 			{
@@ -1922,22 +2177,43 @@ internal sealed class MainWindowController
 				IsNotice = true
 			}
 		};
+		conversationList.ItemsSource = previewMessages;
+		activeConversationMessageIndex = -1;
+		RedrawConversationNavigationRail();
 		conversationOverlay.Visibility = Visibility.Visible;
 		InitializeConversationDialog();
 		try
 		{
 			ConversationReadResult result = await Task.Run(() => ConversationReader.Read(session));
-			conversationList.ItemsSource = result.Messages;
+			if (!IsConversationPreviewRequestCurrent(requestVersion, requestedThreadId))
+			{
+				return;
+			}
+			previewMessages = result.Messages;
+			conversationList.ItemsSource = previewMessages;
 			int visibleCount = result.Messages.Count((ConversationMessage x) => !x.IsNotice);
-			conversationMetaText.Text = UiLanguage.IsEnglish ? string.Format("{0} text messages{1} · Thread {2}", visibleCount, result.Truncated ? " · preview truncated" : string.Empty, session.ThreadId) : string.Format("{0} 条文本消息{1} · Thread {2}", visibleCount, result.Truncated ? " · 预览已截断" : string.Empty, session.ThreadId);
+			conversationMetaText.Text = UiLanguage.IsEnglish ? string.Format("{0} text messages · Thread {1}", visibleCount, session.ThreadId) : string.Format("{0} 条文本消息 · Thread {1}", visibleCount, session.ThreadId);
+			activeConversationMessageIndex = result.Messages.Count - 1;
+			RedrawConversationNavigationRail();
 			if (result.Messages.Count > 0)
 			{
-				conversationList.ScrollIntoView(result.Messages[0]);
+				_ = window.Dispatcher.BeginInvoke(new Action(delegate
+				{
+					if (!IsConversationPreviewRequestCurrent(requestVersion, requestedThreadId) || !ReferenceEquals(conversationList.ItemsSource, result.Messages))
+					{
+						return;
+					}
+					ScrollConversationToIndex(result.Messages.Count - 1, alignToEnd: true);
+				}), System.Windows.Threading.DispatcherPriority.Loaded);
 			}
 		}
 		catch (Exception ex)
 		{
-			conversationList.ItemsSource = new ConversationMessage[1]
+			if (!IsConversationPreviewRequestCurrent(requestVersion, requestedThreadId))
+			{
+				return;
+			}
+			previewMessages = new ConversationMessage[1]
 			{
 				new ConversationMessage
 				{
@@ -1946,15 +2222,455 @@ internal sealed class MainWindowController
 					IsNotice = true
 				}
 			};
+			conversationList.ItemsSource = previewMessages;
+			activeConversationMessageIndex = 0;
+			RedrawConversationNavigationRail();
 			conversationMetaText.Text = UiLanguage.T("读取失败") + " · " + session.ShortId;
 		}
 	}
 
 	private void HideConversation()
 	{
+		InvalidateConversationPreviewRequests();
 		conversationOverlay.Visibility = Visibility.Collapsed;
 		conversationList.ItemsSource = null;
+		previewMessages = Array.Empty<ConversationMessage>();
+		conversationScrollViewer = null;
+		activeConversationMessageIndex = -1;
+		RedrawConversationNavigationRail();
 		previewedThreadId = string.Empty;
+	}
+
+	private void InvalidateConversationPreviewRequests()
+	{
+		conversationPreviewRequestVersion = unchecked(conversationPreviewRequestVersion + 1);
+	}
+
+	private bool IsConversationPreviewRequestCurrent(int requestVersion, string threadId)
+	{
+		return requestVersion == conversationPreviewRequestVersion &&
+			conversationOverlay.Visibility == Visibility.Visible &&
+			string.Equals(previewedThreadId, threadId ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+	}
+
+	private void ConversationNavigationMarkerMouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+	{
+		if (sender is System.Windows.Controls.Button button && button.Tag is ConversationNavigationItem item)
+		{
+			int navigationIndex = conversationNavigationItems.IndexOf(item);
+			ExpandConversationNavigationAround(navigationIndex);
+			ShowConversationNavigationPreview(item);
+		}
+	}
+
+	private void ConversationNavigationMarkerMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+	{
+		if (e.ChangedButton != MouseButton.Left || !(sender is System.Windows.Controls.Button button) || !(button.Tag is ConversationNavigationItem item))
+		{
+			return;
+		}
+		button.Focus();
+		conversationNavigationScrubbing = true;
+		conversationNavigationMoved = false;
+		conversationNavigationPressedItem = item;
+		conversationNavigationPressPoint = e.GetPosition(conversationNavigationRail);
+		conversationNavigationRail.CaptureMouse();
+		ExpandConversationNavigationAround(conversationNavigationItems.IndexOf(item));
+		ShowConversationNavigationPreview(item);
+		e.Handled = true;
+	}
+
+	private void ConversationNavigationRailMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+	{
+		if (!conversationNavigationScrubbing || e.LeftButton != MouseButtonState.Pressed || conversationNavigationItems.Count == 0)
+		{
+			return;
+		}
+		Point position = e.GetPosition(conversationNavigationRail);
+		if (!conversationNavigationMoved && Math.Abs(position.Y - conversationNavigationPressPoint.Y) < 2.0)
+		{
+			return;
+		}
+		conversationNavigationMoved = true;
+		int navigationIndex = Math.Max(0, Math.Min(conversationNavigationItems.Count - 1, (int)Math.Floor(position.Y / 10.0)));
+		ConversationNavigationItem item = conversationNavigationItems[navigationIndex];
+		if (!ReferenceEquals(item, conversationNavigationPressedItem))
+		{
+			conversationNavigationPressedItem = item;
+			ScrollConversationToIndex(item.MessageIndex, alignToEnd: false);
+			ExpandConversationNavigationAround(navigationIndex);
+			ShowConversationNavigationPreview(item);
+		}
+		e.Handled = true;
+	}
+
+	private void ConversationNavigationRailMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+	{
+		if (!conversationNavigationScrubbing || e.ChangedButton != MouseButton.Left)
+		{
+			return;
+		}
+		ConversationNavigationItem item = conversationNavigationPressedItem;
+		bool moved = conversationNavigationMoved;
+		conversationNavigationScrubbing = false;
+		conversationNavigationMoved = false;
+		conversationNavigationPressedItem = null;
+		conversationNavigationRail.ReleaseMouseCapture();
+		if (!moved && item != null)
+		{
+			ScrollConversationToIndex(item.MessageIndex, alignToEnd: false);
+		}
+		e.Handled = true;
+	}
+
+	private void ConversationNavigationMarkerKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+	{
+		if (!(sender is System.Windows.Controls.Button button) || !(button.Tag is ConversationNavigationItem item) || conversationNavigationItems.Count == 0)
+		{
+			return;
+		}
+		int current = conversationNavigationItems.IndexOf(item);
+		int target = current;
+		switch (e.Key)
+		{
+		case Key.Enter:
+		case Key.Space:
+			ScrollConversationToIndex(item.MessageIndex, alignToEnd: false);
+			e.Handled = true;
+			return;
+		case Key.Home:
+			target = 0;
+			break;
+		case Key.End:
+			target = conversationNavigationItems.Count - 1;
+			break;
+		case Key.Up:
+			target = Math.Max(0, current - 1);
+			break;
+		case Key.Down:
+			target = Math.Min(conversationNavigationItems.Count - 1, current + 1);
+			break;
+		case Key.PageUp:
+			target = Math.Max(0, current - 10);
+			break;
+		case Key.PageDown:
+			target = Math.Min(conversationNavigationItems.Count - 1, current + 10);
+			break;
+		case Key.Escape:
+			CloseConversationNavigationPreview();
+			ExpandConversationNavigationAround(-1);
+			e.Handled = true;
+			return;
+		default:
+			return;
+		}
+		ConversationNavigationItem targetItem = conversationNavigationItems[target];
+		targetItem.Button.Focus();
+		EnsureConversationNavigationItemVisible(target);
+		ExpandConversationNavigationAround(target);
+		ShowConversationNavigationPreview(targetItem);
+		e.Handled = true;
+	}
+
+	private void ConversationListScrollChanged(object sender, ScrollChangedEventArgs e)
+	{
+		ScrollViewer mainScroller = conversationScrollViewer ?? ResolveConversationScrollViewer();
+		if (mainScroller == null || !ReferenceEquals(e.OriginalSource, mainScroller))
+		{
+			return;
+		}
+		conversationScrollViewer = mainScroller;
+		if (previewMessages.Count == 0)
+		{
+			UpdateConversationNavigationActive(-1);
+			return;
+		}
+		if (mainScroller.ScrollableHeight <= 0.0 || mainScroller.VerticalOffset >= mainScroller.ScrollableHeight - 0.5)
+		{
+			UpdateConversationNavigationActive(previewMessages.Count - 1);
+			return;
+		}
+		VirtualizingStackPanel panel = FindVisualDescendant<VirtualizingStackPanel>(conversationList);
+		int firstVisibleIndex = -1;
+		double closestTop = double.MaxValue;
+		if (panel != null)
+		{
+			foreach (UIElement child in panel.Children)
+			{
+				if (!(child is ListBoxItem item))
+				{
+					continue;
+				}
+				try
+				{
+					double top = item.TransformToAncestor(conversationList).Transform(new Point(0.0, 0.0)).Y;
+					double bottom = top + item.ActualHeight;
+					if (bottom >= 0.0 && top < closestTop)
+					{
+						closestTop = top;
+						firstVisibleIndex = conversationList.ItemContainerGenerator.IndexFromContainer(item);
+					}
+				}
+				catch
+				{
+				}
+			}
+		}
+		if (firstVisibleIndex >= 0)
+		{
+			UpdateConversationNavigationActive(firstVisibleIndex);
+		}
+	}
+
+	private void ScrollConversationToIndex(int index, bool alignToEnd)
+	{
+		if (previewMessages.Count == 0)
+		{
+			return;
+		}
+		int safeIndex = Math.Max(0, Math.Min(previewMessages.Count - 1, index));
+		ConversationMessage message = previewMessages[safeIndex];
+		conversationList.SelectedIndex = safeIndex;
+		conversationList.ScrollIntoView(message);
+		conversationList.UpdateLayout();
+		conversationScrollViewer = conversationScrollViewer ?? ResolveConversationScrollViewer();
+		if (alignToEnd)
+		{
+			conversationScrollViewer?.ScrollToEnd();
+		}
+		UpdateConversationNavigationActive(safeIndex);
+	}
+
+	private ScrollViewer ResolveConversationScrollViewer()
+	{
+		conversationList.ApplyTemplate();
+		return conversationList.Template?.FindName("PART_ScrollViewer", conversationList) as ScrollViewer ?? FindVisualDescendant<ScrollViewer>(conversationList);
+	}
+
+	private void RedrawConversationNavigationRail()
+	{
+		CloseConversationNavigationPreview();
+		conversationNavigationItems.Clear();
+		conversationNavigationRail.Children.Clear();
+		for (int messageIndex = 0; messageIndex < previewMessages.Count; messageIndex++)
+		{
+			ConversationMessage userMessage = previewMessages[messageIndex];
+			if (!userMessage.IsUser || userMessage.IsNotice)
+			{
+				continue;
+			}
+			ConversationMessage responseMessage = null;
+			for (int responseIndex = messageIndex + 1; responseIndex < previewMessages.Count; responseIndex++)
+			{
+				ConversationMessage candidate = previewMessages[responseIndex];
+				if (candidate.IsUser && !candidate.IsNotice)
+				{
+					break;
+				}
+				if (!candidate.IsUser && !candidate.IsNotice)
+				{
+					responseMessage = candidate;
+					break;
+				}
+			}
+			Border marker = new Border
+			{
+				Width = 6.0,
+				Height = 2.0,
+				CornerRadius = new CornerRadius(1.0),
+				Background = Brush("#B6BBB5"),
+				Opacity = 0.78,
+				IsHitTestVisible = false,
+				SnapsToDevicePixels = true
+			};
+			System.Windows.Controls.Button button = new System.Windows.Controls.Button
+			{
+				Style = (Style)window.FindResource("ConversationNavigationButton"),
+				Content = marker
+			};
+			ConversationNavigationItem item = new ConversationNavigationItem
+			{
+				MessageIndex = messageIndex,
+				UserMessage = userMessage,
+				ResponseMessage = responseMessage,
+				Button = button,
+				Marker = marker
+			};
+			button.Tag = item;
+			System.Windows.Automation.AutomationProperties.SetName(button, UiLanguage.IsEnglish
+				? "Jump to user message " + (conversationNavigationItems.Count + 1)
+				: "跳转到第 " + (conversationNavigationItems.Count + 1) + " 条用户消息");
+			button.MouseEnter += ConversationNavigationMarkerMouseEnter;
+			button.PreviewMouseLeftButtonDown += ConversationNavigationMarkerMouseLeftButtonDown;
+			button.KeyDown += ConversationNavigationMarkerKeyDown;
+			button.GotKeyboardFocus += delegate
+			{
+				int focusedIndex = conversationNavigationItems.IndexOf(item);
+				ExpandConversationNavigationAround(focusedIndex);
+				ShowConversationNavigationPreview(item);
+			};
+			conversationNavigationItems.Add(item);
+			conversationNavigationRail.Children.Add(button);
+		}
+		bool visible = conversationNavigationItems.Count >= 4;
+		conversationNavigationHost.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+		conversationNavigationHost.ToolTip = null;
+		UpdateConversationNavigationActive(activeConversationMessageIndex);
+	}
+
+	private void UpdateConversationNavigationActive(int index)
+	{
+		activeConversationMessageIndex = index;
+		int navigationIndex = -1;
+		if (index >= 0)
+		{
+			for (int i = 0; i < conversationNavigationItems.Count; i++)
+			{
+				if (conversationNavigationItems[i].MessageIndex > index)
+				{
+					break;
+				}
+				navigationIndex = i;
+			}
+			if (navigationIndex < 0 && conversationNavigationItems.Count > 0)
+			{
+				navigationIndex = 0;
+			}
+		}
+		activeConversationNavigationIndex = navigationIndex;
+		for (int i = 0; i < conversationNavigationItems.Count; i++)
+		{
+			bool active = i == navigationIndex;
+			conversationNavigationItems[i].Marker.Background = Brush(active ? "#343A35" : "#B6BBB5");
+			conversationNavigationItems[i].Marker.Opacity = active ? 1.0 : 0.78;
+		}
+		if (navigationIndex >= 0 && conversationNavigationHost.Visibility == Visibility.Visible)
+		{
+			EnsureConversationNavigationItemVisible(navigationIndex);
+		}
+	}
+
+	private void EnsureConversationNavigationItemVisible(int navigationIndex)
+	{
+		if (navigationIndex < 0 || navigationIndex >= conversationNavigationItems.Count || conversationNavigationScroller.ViewportHeight <= 0.0)
+		{
+			return;
+		}
+		double top = navigationIndex * 10.0;
+		double bottom = top + 10.0;
+		double viewportTop = conversationNavigationScroller.VerticalOffset;
+		double viewportBottom = viewportTop + conversationNavigationScroller.ViewportHeight;
+		if (top < viewportTop + 10.0)
+		{
+			conversationNavigationScroller.ScrollToVerticalOffset(Math.Max(0.0, top - 22.0));
+		}
+		else if (bottom > viewportBottom - 10.0)
+		{
+			conversationNavigationScroller.ScrollToVerticalOffset(Math.Max(0.0, bottom - conversationNavigationScroller.ViewportHeight + 22.0));
+		}
+	}
+
+	private void ExpandConversationNavigationAround(int navigationIndex)
+	{
+		for (int i = 0; i < conversationNavigationItems.Count; i++)
+		{
+			int distance = navigationIndex < 0 ? int.MaxValue : Math.Abs(i - navigationIndex);
+			double width = distance switch
+			{
+				0 => 26.0,
+				1 => 20.0,
+				2 => 14.0,
+				3 => 10.0,
+				_ => 6.0
+			};
+			AnimateConversationNavigationMarker(conversationNavigationItems[i].Marker, width);
+		}
+	}
+
+	private static void AnimateConversationNavigationMarker(Border marker, double targetWidth)
+	{
+		double startWidth = marker.ActualWidth > 0.0 ? marker.ActualWidth : marker.Width;
+		marker.BeginAnimation(FrameworkElement.WidthProperty, null);
+		marker.Width = targetWidth;
+		if (Math.Abs(startWidth - targetWidth) < 0.1)
+		{
+			return;
+		}
+		DoubleAnimation animation = new DoubleAnimation(startWidth, targetWidth, TimeSpan.FromMilliseconds(150.0))
+		{
+			EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+			FillBehavior = FillBehavior.Stop
+		};
+		marker.BeginAnimation(FrameworkElement.WidthProperty, animation, HandoffBehavior.SnapshotAndReplace);
+	}
+
+	private void ShowConversationNavigationPreview(ConversationNavigationItem item)
+	{
+		if (item == null || item.Button == null)
+		{
+			return;
+		}
+		conversationNavigationPreviewTitle.Text = CompactConversationPreview(item.UserMessage?.Text, 150, UiLanguage.IsEnglish ? "User message" : "用户消息");
+		conversationNavigationPreviewResponse.Text = item.ResponseMessage == null
+			? (UiLanguage.IsEnglish ? "No text response follows this message." : "这条用户消息后没有文本回复。")
+			: CompactConversationPreview(item.ResponseMessage.Text, 420, UiLanguage.IsEnglish ? "Response" : "回复");
+		conversationNavigationPreviewPopup.PlacementTarget = item.Button;
+		conversationNavigationPreviewPopup.IsOpen = true;
+	}
+
+	private static string CompactConversationPreview(string text, int maximumCharacters, string fallback)
+	{
+		string normalized = (text ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+		while (normalized.Contains("\n\n\n"))
+		{
+			normalized = normalized.Replace("\n\n\n", "\n\n");
+		}
+		if (normalized.Length == 0)
+		{
+			return fallback;
+		}
+		if (normalized.Length > maximumCharacters)
+		{
+			normalized = normalized.Substring(0, maximumCharacters).TrimEnd() + "…";
+		}
+		return normalized;
+	}
+
+	private void CloseConversationNavigationPreview()
+	{
+		conversationNavigationPreviewPopup.IsOpen = false;
+		conversationNavigationPreviewPopup.PlacementTarget = null;
+	}
+
+	private static T FindVisualDescendant<T>(DependencyObject root) where T : DependencyObject
+	{
+		if (root == null)
+		{
+			return null;
+		}
+		int childCount;
+		try
+		{
+			childCount = VisualTreeHelper.GetChildrenCount(root);
+		}
+		catch
+		{
+			return null;
+		}
+		for (int index = 0; index < childCount; index++)
+		{
+			DependencyObject child = VisualTreeHelper.GetChild(root, index);
+			if (child is T match)
+			{
+				return match;
+			}
+			T nested = FindVisualDescendant<T>(child);
+			if (nested != null)
+			{
+				return nested;
+			}
+		}
+		return null;
 	}
 
 	private void CopyPreviewedThreadId()
@@ -2144,28 +2860,59 @@ internal sealed class MainWindowController
 		HashSet<string> selectedIds = new HashSet<string>(selectedSessions.Select((SessionInfo item) => item.ThreadId), StringComparer.OrdinalIgnoreCase);
 		List<SessionInfo> allAffectedSessions = deletionPlans.SelectMany((SessionDeletionPlan plan) => plan.AffectedSessions).GroupBy((SessionInfo item) => item.ThreadId, StringComparer.OrdinalIgnoreCase).Select((IGrouping<string, SessionInfo> group) => group.First()).ToList();
 		int additionalDescendantCount = allAffectedSessions.Count((SessionInfo item) => !selectedIds.Contains(item.ThreadId));
-		DeleteOptions options = SessionBatchDeleteDialog.Show(window, sourceProject, selectedSessions);
+		BatchProjectDeleteScope projectScope = BuildBatchProjectDeleteScope(sourceProject, selectedSessions);
+		bool allMainConversationsSelected = !deletingSubagents && projectScope.AllMainConversationsSelected;
+		string projectPath = projectScope.ProjectPath;
+		DeleteOptions options = SessionBatchDeleteDialog.Show(window, sourceProject, selectedSessions, projectPath, allMainConversationsSelected, projectScope.TotalMainConversationCount, projectScope.AvailabilityBlockReason);
 		if (options == null)
 		{
 			return;
 		}
-		if (options.ConversationMode == ConversationDeleteMode.Permanent || additionalDescendantCount > 0)
+		if (options.ProjectMode != ProjectDeleteMode.None)
+		{
+			try
+			{
+				if (!allMainConversationsSelected || !string.IsNullOrWhiteSpace(projectScope.AvailabilityBlockReason))
+				{
+					throw new InvalidOperationException(projectScope.AvailabilityBlockReason ?? (UiLanguage.IsEnglish ? "The project folder cannot be processed unless every related main conversation is selected." : "只有选中该目录关联的全部主对话后，才能处理项目目录。"));
+				}
+				projectPath = ConversationStorage.ValidateProjectPath(projectPath);
+			}
+			catch (Exception ex)
+			{
+				AppDialog.ShowCompat(window, ex.Message, "不能处理项目目录", MessageBoxButton.OK, MessageBoxImage.Warning);
+				return;
+			}
+		}
+		if (options.ConversationMode == ConversationDeleteMode.Permanent || additionalDescendantCount > 0 || options.ProjectMode != ProjectDeleteMode.None)
 		{
 			string impactText;
 			string impactTitle;
+			string projectImpact = options.ProjectMode switch
+			{
+				ProjectDeleteMode.RecycleBin => UiLanguage.IsEnglish ? "\n\nProject folder: move to the Windows Recycle Bin after all conversations succeed." : "\n\n项目目录：全部会话处理成功后移入 Windows 回收站。",
+				ProjectDeleteMode.Permanent => UiLanguage.IsEnglish ? "\n\nProject folder: permanently delete after all conversations succeed." : "\n\n项目目录：全部会话处理成功后永久删除（不可恢复）。",
+				_ => UiLanguage.IsEnglish ? "\n\nThe project folder remains unchanged." : "\n\n项目目录保持不变。"
+			};
 			if (UiLanguage.IsEnglish)
 			{
 				impactText = options.ConversationMode == ConversationDeleteMode.Permanent
-					? "Permanently delete " + allAffectedSessions.Count + " conversations (" + TextHelpers.FormatBytes(allAffectedSessions.Sum((SessionInfo item) => item.SizeBytes)) + "), including " + additionalDescendantCount + " spawned descendants that were not separately selected.\n\nConversations outside these descendant relationships and the project folder remain unchanged."
-					: "Move " + allAffectedSessions.Count + " conversations to the app trash, including " + additionalDescendantCount + " spawned descendants that were not separately selected. Each receives an independent recoverable copy.\n\nConversations outside these descendant relationships and the project folder remain unchanged.";
-				impactTitle = options.ConversationMode == ConversationDeleteMode.Permanent ? "Confirm permanent deletion" : "Confirm descendant handling";
+					? "Permanently delete " + allAffectedSessions.Count + " conversations (" + TextHelpers.FormatBytes(allAffectedSessions.Sum((SessionInfo item) => item.SizeBytes)) + "), including " + additionalDescendantCount + " spawned descendants that were not separately selected."
+					: "Move " + allAffectedSessions.Count + " conversations to the app trash, including " + additionalDescendantCount + " spawned descendants that were not separately selected. Each receives an independent recoverable copy.";
+				impactText += projectImpact;
+				impactTitle = options.ConversationMode == ConversationDeleteMode.Permanent
+					? "Confirm permanent deletion"
+					: options.ProjectMode != ProjectDeleteMode.None ? "Confirm conversation and project deletion" : "Confirm descendant handling";
 			}
 			else
 			{
 				impactText = options.ConversationMode == ConversationDeleteMode.Permanent
-					? "将永久删除共 " + allAffectedSessions.Count + " 个对话（" + TextHelpers.FormatBytes(allAffectedSessions.Sum((SessionInfo item) => item.SizeBytes)) + "），其中包含 " + additionalDescendantCount + " 个未单独勾选、但由所选对话生成的子代理。\n\n不属于这些父子关系的未选对话和项目目录都不会删除。"
-					: "将把共 " + allAffectedSessions.Count + " 个对话移入软件回收站，其中包含 " + additionalDescendantCount + " 个未单独勾选、但由所选对话生成的子代理；每个对话都会保留独立、可恢复的副本。\n\n不属于这些父子关系的未选对话和项目目录都不会删除。";
-				impactTitle = options.ConversationMode == ConversationDeleteMode.Permanent ? "确认永久删除" : "确认处理关联子代理";
+					? "将永久删除共 " + allAffectedSessions.Count + " 个对话（" + TextHelpers.FormatBytes(allAffectedSessions.Sum((SessionInfo item) => item.SizeBytes)) + "），其中包含 " + additionalDescendantCount + " 个未单独勾选、但由所选对话生成的子代理。"
+					: "将把共 " + allAffectedSessions.Count + " 个对话移入软件回收站，其中包含 " + additionalDescendantCount + " 个未单独勾选、但由所选对话生成的子代理；每个对话都会保留独立、可恢复的副本。";
+				impactText += projectImpact;
+				impactTitle = options.ConversationMode == ConversationDeleteMode.Permanent
+					? "确认永久删除"
+					: options.ProjectMode != ProjectDeleteMode.None ? "确认删除对话和项目" : "确认处理关联子代理";
 			}
 			MessageBoxResult permanentAnswer = AppDialog.ShowCompat(window, impactText, impactTitle, MessageBoxButton.YesNo, MessageBoxImage.Exclamation);
 			if (permanentAnswer != MessageBoxResult.Yes)
@@ -2175,10 +2922,16 @@ internal sealed class MainWindowController
 		}
 
 		string projectId = sourceProject.ProjectId;
-		SetBusy(busy: true, options.ConversationMode == ConversationDeleteMode.MoveToTrash ? "正在把所选" + typeLabel + "移入软件回收站……" : "正在永久删除所选" + typeLabel + "……");
+		string busyMessage = UiLanguage.IsEnglish
+			? options.ConversationMode == ConversationDeleteMode.MoveToTrash ? "Moving the selected " + (deletingSubagents ? "subagent conversations" : "main conversations") + " to app trash…" : "Permanently deleting the selected " + (deletingSubagents ? "subagent conversations" : "main conversations") + "…"
+			: options.ConversationMode == ConversationDeleteMode.MoveToTrash ? "正在把所选" + typeLabel + "移入软件回收站……" : "正在永久删除所选" + typeLabel + "……";
+		SetBusy(busy: true, busyMessage);
 		int completed = 0;
 		int affectedCompleted = 0;
 		List<string> errors = new List<string>();
+		List<DeletedSessionResult> deletionResults = new List<DeletedSessionResult>();
+		bool projectProcessed = false;
+		string projectError = string.Empty;
 		try
 		{
 			await Task.Run(delegate
@@ -2188,14 +2941,16 @@ internal sealed class MainWindowController
 					SessionInfo session = plan.Root;
 					try
 					{
+						DeletedSessionResult deletionResult;
 						if (options.ConversationMode == ConversationDeleteMode.MoveToTrash)
 						{
-							ConversationStorage.MoveToTrash(session, ConversationStorage.ResolveProjectPath(session, sourceProject), plan.AffectedSessions);
+							deletionResult = ConversationStorage.MoveToTrash(session, projectPath, plan.AffectedSessions);
 						}
 						else
 						{
-							ConversationStorage.DeletePermanently(session, plan.AffectedSessions);
+							deletionResult = ConversationStorage.DeletePermanently(session, plan.AffectedSessions);
 						}
+						deletionResults.Add(deletionResult);
 						completed += plan.AffectedSessions.Count((SessionInfo item) => selectedIds.Contains(item.ThreadId));
 						affectedCompleted += plan.AffectedSessions.Count;
 					}
@@ -2203,6 +2958,51 @@ internal sealed class MainWindowController
 					{
 						errors.Add(session.ShortId + " · " + ex.Message);
 					}
+				}
+				if (options.ProjectMode == ProjectDeleteMode.None)
+				{
+					return;
+				}
+				if (errors.Count > 0)
+				{
+					projectError = UiLanguage.IsEnglish
+						? "The project folder was not processed because one or more conversation operations failed."
+						: "有会话处理失败；为避免数据丢失，项目目录未处理。";
+					return;
+				}
+				try
+				{
+					ConversationStorage.DeleteProject(projectPath, options.ProjectMode);
+					projectProcessed = true;
+					if (options.ConversationMode == ConversationDeleteMode.MoveToTrash)
+					{
+						List<string> markErrors = new List<string>();
+						IEnumerable<string> backupPaths = deletionResults
+							.SelectMany((DeletedSessionResult item) => item.BackupPaths.Count > 0 ? item.BackupPaths : new List<string> { item.BackupPath })
+							.Where((string path) => !string.IsNullOrWhiteSpace(path))
+							.Distinct(StringComparer.OrdinalIgnoreCase);
+						foreach (string backupPath in backupPaths)
+						{
+							try
+							{
+								ConversationStorage.MarkProjectHandled(backupPath, projectPath, options.ProjectMode);
+							}
+							catch (Exception ex)
+							{
+								markErrors.Add(ex.Message);
+							}
+						}
+						if (markErrors.Count > 0)
+						{
+							projectError = UiLanguage.IsEnglish
+								? "The project folder was processed, but some app-trash metadata could not be updated: " + markErrors[0]
+								: "项目目录已处理，但部分软件回收站记录未能更新：" + markErrors[0];
+						}
+					}
+				}
+				catch (Exception ex)
+				{
+					projectError = ex.Message;
 				}
 			});
 		}
@@ -2229,15 +3029,116 @@ internal sealed class MainWindowController
 		UpdateSessionTypeView();
 		string action = options.ConversationMode == ConversationDeleteMode.MoveToTrash ? "移入软件回收站" : "永久删除";
 		string resultText = UiLanguage.IsEnglish
-			? (options.ConversationMode == ConversationDeleteMode.MoveToTrash ? "Moved " : "Permanently deleted ") + completed + " selected " + (deletingSubagents ? "subagent conversations" : "main conversations") + "; " + affectedCompleted + " conversations were processed in total.\n\nUnselected conversations outside the selected descendant relationships and the project folder remain unchanged."
-			: "已" + action + " " + completed + " 个所选" + typeLabel + "，实际处理 " + affectedCompleted + " 个对话。\n\n不属于所选对话后代关系的未选" + typeLabel + "、" + otherTypeLabel + "和项目目录保持不变。";
+			? (options.ConversationMode == ConversationDeleteMode.MoveToTrash ? "Moved " : "Permanently deleted ") + completed + " selected " + (deletingSubagents ? "subagent conversations" : "main conversations") + "; " + affectedCompleted + " conversations were processed in total."
+			: "已" + action + " " + completed + " 个所选" + typeLabel + "，实际处理 " + affectedCompleted + " 个对话。";
+		if (options.ProjectMode == ProjectDeleteMode.None)
+		{
+			resultText += UiLanguage.IsEnglish
+				? "\n\nUnselected conversations outside the selected descendant relationships and the project folder remain unchanged."
+				: "\n\n不属于所选对话后代关系的未选" + typeLabel + "、" + otherTypeLabel + "和项目目录保持不变。";
+		}
+		else if (projectProcessed)
+		{
+			resultText += UiLanguage.IsEnglish
+				? (options.ProjectMode == ProjectDeleteMode.RecycleBin ? "\n\nThe project folder was moved to the Windows Recycle Bin." : "\n\nThe project folder was permanently deleted.")
+				: (options.ProjectMode == ProjectDeleteMode.RecycleBin ? "\n\n项目目录已移入 Windows 回收站。" : "\n\n项目目录已永久删除。");
+		}
+		else
+		{
+			resultText += UiLanguage.IsEnglish ? "\n\nProject folder not processed: " + projectError : "\n\n项目目录未处理：" + projectError;
+		}
 		if (errors.Count > 0)
 		{
 			resultText += UiLanguage.IsEnglish ? "\n\n" + errors.Count + " operations failed:\n" + string.Join("\n", errors.Take(8)) : "\n\n有 " + errors.Count + " 个处理失败：\n" + string.Join("\n", errors.Take(8));
 		}
+		else if (projectProcessed && !string.IsNullOrWhiteSpace(projectError))
+		{
+			resultText += UiLanguage.IsEnglish ? "\n\nProject note: " + projectError : "\n\n项目提示：" + projectError;
+		}
 		resultText += UiLanguage.IsEnglish ? "\n\nAfter reopening Codex, deleted conversations will no longer appear in the sidebar." : "\n\n重新打开 Codex 后，已删除的会话不会再出现在侧边栏。";
-		SetStatus(errors.Count == 0 ? "所选" + typeLabel + "已处理。" : "部分所选" + typeLabel + "处理失败。", error: errors.Count > 0);
-		AppDialog.ShowCompat(window, resultText, errors.Count == 0 ? "所选" + typeLabel + "处理完成" : typeLabel + "部分处理完成", MessageBoxButton.OK, errors.Count == 0 ? MessageBoxImage.Asterisk : MessageBoxImage.Warning);
+		bool hasFailure = errors.Count > 0 || !string.IsNullOrWhiteSpace(projectError);
+		string statusMessage = UiLanguage.IsEnglish
+			? hasFailure ? "Some selected " + (deletingSubagents ? "subagent conversations" : "main conversations") + " or the project could not be processed." : "The selected " + (deletingSubagents ? "subagent conversations" : "main conversations") + " were processed."
+			: hasFailure ? "部分所选" + typeLabel + "或项目处理失败。" : "所选" + typeLabel + "已处理。";
+		string resultTitle = UiLanguage.IsEnglish
+			? hasFailure ? "Selection partially processed" : "Selection processed"
+			: hasFailure ? typeLabel + "部分处理完成" : "所选" + typeLabel + "处理完成";
+		SetStatus(statusMessage, error: hasFailure);
+		AppDialog.ShowCompat(window, resultText, resultTitle, MessageBoxButton.OK, hasFailure ? MessageBoxImage.Warning : MessageBoxImage.Asterisk);
+	}
+
+	private BatchProjectDeleteScope BuildBatchProjectDeleteScope(ProjectGroup sourceProject, IEnumerable<SessionInfo> selectedSessions)
+	{
+		BatchProjectDeleteScope result = new BatchProjectDeleteScope
+		{
+			ProjectPath = sourceProject?.ProjectPath ?? string.Empty
+		};
+		if (sourceProject == null || string.IsNullOrWhiteSpace(sourceProject.ProjectPath))
+		{
+			result.TotalMainConversationCount = sourceProject?.MainCount ?? 0;
+			result.AvailabilityBlockReason = UiLanguage.IsEnglish ? "This project does not have a stable recorded folder, so project processing is unavailable." : "该项目没有稳定的已记录目录，当前不能处理项目目录。";
+			return result;
+		}
+		try
+		{
+			result.ProjectPath = System.IO.Path.GetFullPath(TextHelpers.StripExtendedPrefix(sourceProject.ProjectPath));
+		}
+		catch
+		{
+			result.TotalMainConversationCount = sourceProject.MainCount;
+			result.AvailabilityBlockReason = UiLanguage.IsEnglish ? "The recorded project folder is invalid, so project processing is unavailable." : "记录的项目目录无效，当前不能处理项目目录。";
+			return result;
+		}
+
+		string canonicalProjectPath = TextHelpers.CanonicalPath(result.ProjectPath);
+		List<SessionInfo> allMainSessions = projects
+			.SelectMany((ProjectGroup project) => project.Sessions ?? new List<SessionInfo>())
+			.Where((SessionInfo session) => session != null && !session.IsSubagent && !string.IsNullOrWhiteSpace(session.ThreadId))
+			.GroupBy((SessionInfo session) => session.ThreadId, StringComparer.OrdinalIgnoreCase)
+			.Select((IGrouping<string, SessionInfo> group) => group.First())
+			.ToList();
+		List<SessionInfo> samePathGroupSessions = projects
+			.Where((ProjectGroup project) => string.Equals(TextHelpers.CanonicalPath(project.ProjectPath), canonicalProjectPath, StringComparison.OrdinalIgnoreCase))
+			.SelectMany((ProjectGroup project) => project.Sessions ?? new List<SessionInfo>())
+			.Where((SessionInfo session) => session != null && !session.IsSubagent && !string.IsNullOrWhiteSpace(session.ThreadId))
+			.ToList();
+		List<SessionInfo> relatedMainSessions = samePathGroupSessions
+			.Concat(allMainSessions.Where((SessionInfo session) => !string.IsNullOrWhiteSpace(session.Cwd) && TextHelpers.IsWithin(session.Cwd, result.ProjectPath)))
+			.GroupBy((SessionInfo session) => session.ThreadId, StringComparer.OrdinalIgnoreCase)
+			.Select((IGrouping<string, SessionInfo> group) => group.First())
+			.ToList();
+		result.TotalMainConversationCount = relatedMainSessions.Count;
+
+		int inconsistentCount = samePathGroupSessions
+			.GroupBy((SessionInfo session) => session.ThreadId, StringComparer.OrdinalIgnoreCase)
+			.Select((IGrouping<string, SessionInfo> group) => group.First())
+			.Count((SessionInfo session) => string.IsNullOrWhiteSpace(session.Cwd) || !TextHelpers.IsWithin(session.Cwd, result.ProjectPath));
+		if (inconsistentCount > 0)
+		{
+			result.AvailabilityBlockReason = UiLanguage.IsEnglish
+				? inconsistentCount + " main conversation(s) assigned to this project record a different folder. Project processing is disabled to prevent deleting the wrong directory."
+				: "该项目中有 " + inconsistentCount + " 个主对话记录了不同目录；为避免误删，当前不提供项目目录处理。";
+			return result;
+		}
+
+		HashSet<string> currentGroupIds = new HashSet<string>((sourceProject.Sessions ?? new List<SessionInfo>())
+			.Where((SessionInfo session) => session != null && !session.IsSubagent && !string.IsNullOrWhiteSpace(session.ThreadId))
+			.Select((SessionInfo session) => session.ThreadId), StringComparer.OrdinalIgnoreCase);
+		HashSet<string> relatedIds = new HashSet<string>(relatedMainSessions.Select((SessionInfo session) => session.ThreadId), StringComparer.OrdinalIgnoreCase);
+		int outsideGroupCount = relatedIds.Count((string id) => !currentGroupIds.Contains(id));
+		if (outsideGroupCount > 0)
+		{
+			result.AvailabilityBlockReason = UiLanguage.IsEnglish
+				? "The same folder is also linked to " + outsideGroupCount + " main conversation(s) in other project groups. Project processing is disabled so those conversations are not left pointing to a deleted folder."
+				: "同一目录还关联其他项目分组中的 " + outsideGroupCount + " 个主对话；为避免留下指向已删除目录的对话，当前不提供项目目录处理。";
+			return result;
+		}
+
+		HashSet<string> selectedIdsForScope = new HashSet<string>((selectedSessions ?? Enumerable.Empty<SessionInfo>())
+			.Where((SessionInfo session) => session != null && !session.IsSubagent && !string.IsNullOrWhiteSpace(session.ThreadId))
+			.Select((SessionInfo session) => session.ThreadId), StringComparer.OrdinalIgnoreCase);
+		result.AllMainConversationsSelected = relatedIds.Count > 0 && selectedIdsForScope.SetEquals(relatedIds);
+		return result;
 	}
 
 	private int CountRelatedConversations(string projectPath)
@@ -2457,20 +3358,6 @@ internal sealed class MainWindowController
 		}
 	}
 
-	private async Task BrowseCctAsync()
-	{
-		Microsoft.Win32.OpenFileDialog dialog = new Microsoft.Win32.OpenFileDialog
-		{
-			Title = UiLanguage.T("选择 cct.exe"),
-			Filter = UiLanguage.T("cct.exe|cct.exe|可执行文件 (*.exe)|*.exe")
-		};
-		if (dialog.ShowDialog(window) == true)
-		{
-			cctPathBox.Text = dialog.FileName;
-			await RefreshDataAsync();
-		}
-	}
-
 	private async Task BackupSelectedAsync()
 	{
 		List<BackupProjectSelection> selections = projects.Select((ProjectGroup project) => new BackupProjectSelection
@@ -2486,14 +3373,6 @@ internal sealed class MainWindowController
 		{
 			AppDialog.ShowCompat(window, "请在右侧勾选一个或多个主对话。可以切换项目继续勾选，选择会保留。", "尚未选择对话", MessageBoxButton.OK, MessageBoxImage.Asterisk);
 			return;
-		}
-		if (fullFidelityCheck.IsChecked != true)
-		{
-			MessageBoxResult messageBoxResult = AppDialog.ShowCompat(window, "为避开 cct 对重复 Thread ID 的误判，精准单对话备份会直接封装原始会话，因此必须完整保留内容。\n\n是否继续？", "精准备份会保留原文", MessageBoxButton.YesNo, MessageBoxImage.Exclamation);
-			if (messageBoxResult != MessageBoxResult.Yes)
-			{
-				return;
-			}
 		}
 		string prefix = selections.Count == 1 ? TextHelpers.SafeFileName(selections[0].Project.DisplayName) : selections.Count + "个项目";
 		string name = prefix + "-仅对话-已选" + selectedCount + "个-" + DateTime.Now.ToString("yyyyMMdd-HHmm") + BackupPackageFormat.ConversationExtension;
@@ -2624,12 +3503,6 @@ internal sealed class MainWindowController
 
 	private async Task CreateBatchPackAsync(IList<BackupProjectSelection> selections, bool includeProjectFiles, string output)
 	{
-		string cct = CctRunner.ResolveCctPath(cctPathBox.Text.Trim());
-		if (string.IsNullOrWhiteSpace(cct))
-		{
-			AppDialog.ShowCompat(window, "没有找到 cct.exe。", "无法备份", MessageBoxButton.OK, MessageBoxImage.Exclamation);
-			return;
-		}
 		if (selections == null || selections.Count < 2)
 		{
 			throw new InvalidOperationException("批量迁移至少需要两个项目。");
@@ -2647,7 +3520,8 @@ internal sealed class MainWindowController
 				source_project = string.Empty,
 				source_project_name = selections.Count + " 个项目",
 				includes_subagents = includeProjectFiles,
-				cct_version = ((await CctRunner.RunAsync(cct, new string[1] { "--version" }, null)).StdOut ?? string.Empty).Trim(),
+				engine = "native",
+				engine_version = typeof(MainWindowController).Assembly.GetName().Version?.ToString(3) ?? string.Empty,
 				bundles = new List<string>(),
 				sessions = new List<PackSession>(),
 				projects = new List<PackProject>()
@@ -2676,8 +3550,6 @@ internal sealed class MainWindowController
 					SetStatus($"正在封装第 {currentProjectIndex}/{selections.Count} 个项目的对话：{project.DisplayName}", error: false);
 					string bundleRelative = projectRelativeDirectory + "/project.codexbundle";
 					string bundlePath = System.IO.Path.Combine(projectTempDirectory, "project.codexbundle");
-					if (fullFidelityCheck.IsChecked == true)
-					{
 						await Task.Run(delegate
 						{
 							ExactBundleWriter.CreateBundle(selection.Sessions, bundlePath, delegate(int index, int count, SessionInfo item)
@@ -2691,18 +3563,6 @@ internal sealed class MainWindowController
 								}
 							});
 						});
-					}
-					else
-					{
-						CctResult export = await CctRunner.RunAsync(cct, new string[9]
-						{
-							"export", "--project", project.ProjectPath, "--include-archived", "--codex-home", CodexCatalog.ResolveCodexHome(), "--redact", "-o", bundlePath
-						}, null);
-						if (export.ExitCode != 0)
-						{
-							throw new InvalidOperationException(project.DisplayName + "：" + CctRunner.FirstUseful(export));
-						}
-					}
 					packProject.bundles.Add(bundleRelative);
 					manifest.bundles.Add(bundleRelative);
 					foreach (SessionInfo session in selection.Sessions)
@@ -2750,12 +3610,12 @@ internal sealed class MainWindowController
 				}
 				manifest.projects.Add(packProject);
 			}
-			File.WriteAllText(System.IO.Path.Combine(temp, "manifest.json"), CctRunner.NewSerializer().Serialize(manifest), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			File.WriteAllText(System.IO.Path.Combine(temp, "manifest.json"), JsonSerialization.NewSerializer().Serialize(manifest), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 			if (File.Exists(output))
 			{
 				throw new IOException("备份文件在创建期间已存在，请重试：\n" + output);
 			}
-			ZipFile.CreateFromDirectory(temp, output, CompressionLevel.Optimal, includeBaseDirectory: false);
+			OuterPackageArchive.CreateFromDirectoryAtomic(temp, output);
 			long fileCount = manifest.projects.Where((PackProject project) => project.project_payload != null).Sum((PackProject project) => (long)project.project_payload.file_count);
 			long bytes = manifest.projects.Where((PackProject project) => project.project_payload != null).Sum((PackProject project) => project.project_payload.uncompressed_bytes);
 			SetStatus("批量迁移包创建完成：" + output, error: false);
@@ -2797,12 +3657,6 @@ internal sealed class MainWindowController
 
 	private async Task CreatePackAsync(ProjectGroup project, IList<SessionInfo> sessions, bool wholeProject, bool includeProjectFiles, string output)
 	{
-		string cct = CctRunner.ResolveCctPath(cctPathBox.Text.Trim());
-		if (string.IsNullOrWhiteSpace(cct))
-		{
-			AppDialog.ShowCompat(window, "没有找到 cct.exe。", "无法备份", MessageBoxButton.OK, MessageBoxImage.Exclamation);
-			return;
-		}
 		string temp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "codex-pack-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(temp);
 		SetBusy(busy: true, "正在创建迁移包……");
@@ -2816,20 +3670,17 @@ internal sealed class MainWindowController
 				source_project = project.ProjectPath,
 				source_project_name = project.DisplayName,
 				includes_subagents = wholeProject,
-				cct_version = string.Empty,
+				engine = "native",
+				engine_version = typeof(MainWindowController).Assembly.GetName().Version?.ToString(3) ?? string.Empty,
 				bundles = new List<string>(),
 				sessions = new List<PackSession>(),
 				project_payload = null
 			};
-			manifest.cct_version = ((await CctRunner.RunAsync(cct, new string[1] { "--version" }, null)).StdOut ?? string.Empty).Trim();
-			string policy = ((fullFidelityCheck.IsChecked == true) ? "--allow-secrets" : "--redact");
 			if (wholeProject)
 			{
 				SetStatus("正在完整备份项目（包含子代理对话）……", error: false);
 				string bundleName = "project.codexbundle";
 				string bundlePath = System.IO.Path.Combine(temp, bundleName);
-				if (fullFidelityCheck.IsChecked == true)
-				{
 					await Task.Run(delegate
 					{
 						ExactBundleWriter.CreateBundle(project.Sessions, bundlePath, delegate(int index, int count, SessionInfo item)
@@ -2840,26 +3691,6 @@ internal sealed class MainWindowController
 							});
 						});
 					});
-				}
-				else
-				{
-					CctResult export = await CctRunner.RunAsync(cct, new string[9]
-					{
-						"export",
-						"--project",
-						project.ProjectPath,
-						"--include-archived",
-						"--codex-home",
-						CodexCatalog.ResolveCodexHome(),
-						policy,
-						"-o",
-						bundlePath
-					}, null);
-					if (export.ExitCode != 0)
-					{
-						throw new InvalidOperationException(CctRunner.FirstUseful(export));
-					}
-				}
 				manifest.bundles.Add(bundleName);
 				foreach (SessionInfo session2 in sessions)
 				{
@@ -2902,12 +3733,12 @@ internal sealed class MainWindowController
 				});
 				SetStatus($"项目文件封装完成：{manifest.project_payload.file_count} 个文件，{ProjectPayloadService.FormatBytes(manifest.project_payload.uncompressed_bytes)}", error: false);
 			}
-			File.WriteAllText(System.IO.Path.Combine(temp, "manifest.json"), CctRunner.NewSerializer().Serialize(manifest), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			File.WriteAllText(System.IO.Path.Combine(temp, "manifest.json"), JsonSerialization.NewSerializer().Serialize(manifest), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 			if (File.Exists(output))
 			{
 				throw new IOException("备份文件在创建期间已存在，请重试：\n" + output);
 			}
-			ZipFile.CreateFromDirectory(temp, output, CompressionLevel.Optimal, includeBaseDirectory: false);
+			OuterPackageArchive.CreateFromDirectoryAtomic(temp, output);
 			SetStatus("迁移包创建完成：" + output, error: false);
 			string projectFilesSummary = (manifest.project_payload == null) ? string.Empty : $"\n项目文件：{manifest.project_payload.file_count} 个（{ProjectPayloadService.FormatBytes(manifest.project_payload.uncompressed_bytes)}）" + ((manifest.project_payload.skipped_reparse_points > 0) ? $"\n跳过重解析点：{manifest.project_payload.skipped_reparse_points} 个" : string.Empty);
 			AppDialog.ShowCompat(window, $"备份完成！\n\n项目：{project.DisplayName}\n对话记录：{sessions.Count}" + projectFilesSummary + $"\n文件：{output}", "备份成功", MessageBoxButton.OK, MessageBoxImage.Asterisk);
@@ -2989,17 +3820,7 @@ internal sealed class MainWindowController
 		{
 			if (BackupPackageFormat.IsFormalPackage(path))
 			{
-				loadedManifest = await Task.Run(delegate
-				{
-					using ZipArchive zipArchive = ZipFile.OpenRead(path);
-					ZipArchiveEntry entry = zipArchive.GetEntry("manifest.json");
-					if (entry == null)
-					{
-						throw new InvalidDataException("迁移包缺少 manifest.json。");
-					}
-					using StreamReader streamReader = new StreamReader(entry.Open(), Encoding.UTF8);
-					return CctRunner.NewSerializer().Deserialize<PackManifest>(streamReader.ReadToEnd());
-				});
+				loadedManifest = await Task.Run(() => OuterPackageArchive.ReadManifest(path));
 				if (loadedManifest == null)
 				{
 					throw new InvalidDataException("迁移包清单格式无效。");
@@ -3201,12 +4022,6 @@ internal sealed class MainWindowController
 	}
 
 
-	internal static List<string> BuildImportConflictArguments(string mode)
-	{
-		return new List<string> { "--merge" };
-	}
-
-
 	private string ConflictModeConfirmation(string mode)
 	{
 		if (string.Equals(mode, "copy", StringComparison.OrdinalIgnoreCase))
@@ -3369,12 +4184,6 @@ internal sealed class MainWindowController
 		{
 			return;
 		}
-		string cct = CctRunner.ResolveCctPath(cctPathBox.Text.Trim());
-		if (string.IsNullOrWhiteSpace(cct))
-		{
-			AppDialog.Show(window, "缺少运行组件", "需要 cct.exe", "请先通过“运行组件…”选择 cct.exe，然后再检查或导入迁移包。", AppDialogTone.Warning, "返回设置");
-			return;
-		}
 		string package = packagePathBox.Text.Trim();
 		if (!File.Exists(package))
 		{
@@ -3449,7 +4258,7 @@ internal sealed class MainWindowController
 		string rewriteTemp = null;
 		UpdateImportStage("1 / 4 · 读取迁移包", "正在解压清单并验证对话包结构。界面仍可响应，请勿重复点击。");
 		string temp = null;
-		CctBackupTransaction cctBackupTransaction = null;
+		NativeImportTransaction importTransaction = null;
 		List<ImportProjectContext> contexts = new List<ImportProjectContext>();
 		try
 		{
@@ -3469,14 +4278,35 @@ internal sealed class MainWindowController
 			{
 				temp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "codex-import-" + Guid.NewGuid().ToString("N"));
 				Directory.CreateDirectory(temp);
-				await Task.Run(() => ExtractZipSafely(package, temp));
+				await Task.Run(() => OuterPackageArchive.ExtractSafely(package, temp));
 				contexts = BuildImportContexts(loadedManifest, temp, target, mapProjectPath, restoreProjectFiles);
 				bundlePaths.AddRange(contexts.SelectMany((ImportProjectContext context) => context.BundlePaths));
 			}
-			await Task.Run(() => TargetedThreadIndexer.ValidateBundles(bundlePaths));
+			int sourcePreflightBundleCount = 0;
+			int sourcePreflightSessionCount = 0;
+			foreach (ImportProjectContext context in contexts)
+			{
+				string sourceCwd = context.Project.source_project;
+				if (string.IsNullOrWhiteSpace(sourceCwd) && context.Project.project_payload != null)
+				{
+					sourceCwd = context.Project.project_payload.source_path;
+				}
+				string targetCwd = mapProjectPath ? context.TargetPath : null;
+				foreach (string sourceBundle in context.BundlePaths)
+				{
+					sourcePreflightBundleCount++;
+					SetStatus($"正在严格预检第 {sourcePreflightBundleCount}/{bundlePaths.Count} 个原始对话包：{context.Project.source_project_name}", error: false);
+					sourcePreflightSessionCount += await Task.Run(() =>
+						NativeBundleImporter.PreflightBundle(
+							sourceBundle,
+							mapProjectPath ? sourceCwd : null,
+							targetCwd));
+				}
+			}
 			UpdateImportStage("2 / 4 · 检查项目文件", restoreProjectFiles ? "正在核对项目载荷、目标目录和同名文件冲突。" : "本次只处理对话，正在核对目标项目目录。");
 			importLog.Clear();
 			AppendLog(dryRun ? "开始安全检查（不会写入项目或会话）" : "开始正式导入");
+			AppendLog($"严格原生预检完成：{sourcePreflightBundleCount} 个原始对话包、{sourcePreflightSessionCount} 个对话的路径、限额、清单、哈希、身份与 cwd 均已通过；随后才会规划合并或重编号。");
 			if (restoreProjectFiles)
 			{
 				int inspectIndex = 0;
@@ -3524,7 +4354,30 @@ internal sealed class MainWindowController
 			HashSet<string> filesBeforeImport = await Task.Run(() => dryRun ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) : TargetedThreadIndexer.SnapshotSessionFiles(codexHome));
 			if (!dryRun)
 			{
-				cctBackupTransaction = await Task.Run(() => CctBackupTransaction.Begin(codexHome));
+				int preflightCount = 0;
+				foreach (ImportProjectContext context in contexts)
+				{
+					string preflightSource = context.Project.source_project;
+					if (string.IsNullOrWhiteSpace(preflightSource) && context.Project.project_payload != null)
+					{
+						preflightSource = context.Project.project_payload.source_path;
+					}
+					string preflightTarget = mapProjectPath ? context.TargetPath : null;
+					foreach (ConversationImportPlan plan in context.ImportPlans)
+					{
+						preflightCount++;
+						SetStatus($"正在预检第 {preflightCount}/{effectiveBundlePaths.Count} 个对话包：{context.Project.source_project_name}", error: false);
+						await Task.Run(() => NativeBundleImporter.Import(
+							plan.EffectiveBundlePath,
+							codexHome,
+							mapProjectPath ? preflightSource : null,
+							preflightTarget,
+							NativeBundleImportMode.Merge,
+							dryRun: true));
+					}
+				}
+				AppendLog($"原生导入预检完成：{preflightCount} 个对话包的路径、清单、哈希、cwd 与合并关系均已通过。");
+				importTransaction = await Task.Run(() => NativeImportTransaction.Begin(codexHome));
 			}
 			if (!dryRun && restoreProjectFiles)
 			{
@@ -3550,49 +4403,33 @@ internal sealed class MainWindowController
 					string bundle = plan.EffectiveBundlePath;
 					current++;
 					SetStatus(string.Format("{0}第 {1}/{2} 个对话包 · {3}", dryRun ? "检查" : "导入", current, bundlePaths.Count, context.Project.source_project_name), error: false);
-					List<string> args = new List<string> { "import", bundle, "--codex-home", codexHome };
-					string workDir = null;
+					string sourceProjectPath = null;
+					string targetProjectPath = null;
 					if (mapProjectPath)
 					{
-						string sourceProjectPath = context.Project.source_project;
+						sourceProjectPath = context.Project.source_project;
 						if (string.IsNullOrWhiteSpace(sourceProjectPath) && context.Project.project_payload != null)
 						{
 							sourceProjectPath = context.Project.project_payload.source_path;
 						}
-						if (!CctImportPathMapping.AddArguments(args, sourceProjectPath, context.TargetPath, out workDir))
+						targetProjectPath = context.TargetPath;
+						if (!string.IsNullOrWhiteSpace(sourceProjectPath) && string.Equals(TextHelpers.CanonicalPath(sourceProjectPath), TextHelpers.CanonicalPath(targetProjectPath), StringComparison.OrdinalIgnoreCase))
 						{
-							AppendLog("源项目与目标项目相同，已跳过 cwd 映射；对话仍按当前项目路径导入。");
+							AppendLog("源项目与目标项目相同；原生引擎将保留现有 cwd。");
 						}
-					}
-					args.AddRange(BuildImportConflictArguments(conflictMode));
-					if (dryRun)
-					{
-						args.Add("--dry-run");
 					}
 					List<string> plannedIds = plan.IdMap.Keys.Concat(plan.IdMap.Values).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-					try
+					NativeBundleImportResult nativeResult = await Task.Run(() => NativeBundleImporter.Import(
+						bundle,
+						codexHome,
+						sourceProjectPath,
+						targetProjectPath,
+						NativeBundleImportMode.Merge,
+						dryRun));
+					AppendLog($"原生引擎：新增 {nativeResult.CreatedCount}，快进合并 {nativeResult.MergedCount}，替换 {nativeResult.ReplacedCount}，无需写入 {nativeResult.SkippedCount}。");
+					if (!dryRun && importTransaction != null)
 					{
-						CctResult import = await CctRunner.RunAsync(cct, args, workDir);
-						AppendLog("\n> " + import.CommandLine);
-						if (!string.IsNullOrWhiteSpace(import.StdOut))
-						{
-							AppendLog(import.StdOut.TrimEnd());
-						}
-						if (!string.IsNullOrWhiteSpace(import.StdErr))
-						{
-							AppendLog(import.StdErr.TrimEnd());
-						}
-						if (import.ExitCode != 0)
-						{
-							throw new InvalidOperationException("cct 返回错误，详见操作记录。");
-						}
-					}
-					finally
-					{
-						if (!dryRun && cctBackupTransaction != null)
-						{
-							await Task.Run(() => cctBackupTransaction.TrackImportedSessionFiles(TargetedThreadIndexer.SnapshotSessionFiles(codexHome).Where(path => !filesBeforeImport.Contains(path)), plannedIds));
-						}
+						await Task.Run(() => importTransaction.TrackImportedSessionFiles(nativeResult.TouchedSessionFiles, plannedIds));
 					}
 				}
 			}
@@ -3648,10 +4485,10 @@ internal sealed class MainWindowController
 			}
 			UpdateImportStage("4 / 4 · 验证通过", indexResult.DesktopStateFound ? $"{indexResult.VisibilityVerifiedCount}/{indexResult.IndexedCount} 条索引兼容性、{indexResult.DesktopAssignmentVerifiedCount}/{indexResult.DesktopAssignmentExpectedCount} 条桌面项目归属均已核验。" : $"{indexResult.VisibilityVerifiedCount}/{indexResult.IndexedCount} 条会话索引兼容性已核验。");
 			AppendLog($"定点索引完成：新增 {indexResult.InsertedCount} 条，更新 {indexResult.UpdatedCount} 条；全局回填状态未修改。");
-			int removedCctBackups = cctBackupTransaction == null ? 0 : await Task.Run(() => cctBackupTransaction.CommitAndDeleteTemporaryBackups());
-			if (removedCctBackups > 0)
+			int removedSnapshots = importTransaction == null ? 0 : await Task.Run(() => importTransaction.CommitAndDeleteTemporaryBackups());
+			if (removedSnapshots > 0)
 			{
-				AppendLog("导入验证完成，已清理 " + removedCctBackups + " 个事务安全快照。");
+				AppendLog("导入验证完成，已清理 " + removedSnapshots + " 个事务安全快照。");
 			}
 			if (!string.IsNullOrWhiteSpace(indexResult.BackupPath))
 			{
@@ -3672,13 +4509,13 @@ internal sealed class MainWindowController
 		}
 		catch (OperationCanceledException ex)
 		{
-			await RollbackCctImportAsync(cctBackupTransaction);
+			await RollbackNativeImportAsync(importTransaction);
 			AppendLog("\n" + ex.Message);
 			SetStatus("操作已取消，没有继续导入。", error: false);
 		}
 		catch (Exception ex)
 		{
-			await RollbackCctImportAsync(cctBackupTransaction);
+			await RollbackNativeImportAsync(importTransaction);
 			List<string> restoredTargets = contexts.Where((ImportProjectContext context) => context.RestoreResult != null).Select((ImportProjectContext context) => context.TargetPath).ToList();
 			if (restoredTargets.Count > 0)
 			{
@@ -3703,7 +4540,7 @@ internal sealed class MainWindowController
 		}
 	}
 
-	private async Task RollbackCctImportAsync(CctBackupTransaction transaction)
+	private async Task RollbackNativeImportAsync(NativeImportTransaction transaction)
 	{
 		if (transaction == null)
 		{
@@ -3711,7 +4548,7 @@ internal sealed class MainWindowController
 		}
 		try
 		{
-			CctBackupRollbackResult rollback = await Task.Run(() => transaction.RollbackAndDeleteTemporaryBackups());
+			ImportTransactionRollbackResult rollback = await Task.Run(() => transaction.RollbackAndDeleteTemporaryBackups());
 			if (rollback.RestoredCount > 0 || rollback.DeletedCount > 0 || rollback.RemovedImportedCount > 0)
 			{
 				AppendLog($"导入未完成：已恢复 {rollback.RestoredCount} 个原会话，移除 {rollback.RemovedImportedCount} 个本次新增会话，并清理 {rollback.DeletedCount} 个事务安全快照。");
@@ -3719,287 +4556,7 @@ internal sealed class MainWindowController
 		}
 		catch (Exception cleanupError)
 		{
-			AppendLog("警告：清理 cct 临时快照失败：" + cleanupError.Message);
-		}
-	}
-
-	private async Task ImportPackageLegacyAsync(bool dryRun)
-	{
-		if (isBusy)
-		{
-			return;
-		}
-		string cct = CctRunner.ResolveCctPath(cctPathBox.Text.Trim());
-		if (string.IsNullOrWhiteSpace(cct))
-		{
-			AppDialog.ShowCompat(window, "请先在“备份对话”页选择 cct.exe。", "缺少 cct.exe", MessageBoxButton.OK, MessageBoxImage.Exclamation);
-			return;
-		}
-		string package = packagePathBox.Text.Trim();
-		if (!File.Exists(package))
-		{
-			AppDialog.ShowCompat(window, "请选择有效的迁移包。", "找不到文件", MessageBoxButton.OK, MessageBoxImage.Exclamation);
-			return;
-		}
-		if (string.IsNullOrWhiteSpace(loadedPackagePath) || !string.Equals(TextHelpers.CanonicalPath(loadedPackagePath), TextHelpers.CanonicalPath(package), StringComparison.OrdinalIgnoreCase))
-		{
-			await LoadPackageSummaryAsync(package);
-			if (BackupPackageFormat.IsFormalPackage(package) && loadedManifest == null)
-			{
-				AppDialog.ShowCompat(window, "无法读取迁移包清单，请查看操作记录。", "迁移包无效", MessageBoxButton.OK, MessageBoxImage.Exclamation);
-				return;
-			}
-		}
-		string target = targetPathBox.Text.Trim();
-		bool restoreProjectFiles = ShouldRestoreProjectFiles();
-		bool mapProjectPath = restoreProjectFiles || mapPathCheck.IsChecked == true;
-		if (mapProjectPath && !restoreProjectFiles && !Directory.Exists(target))
-		{
-			AppDialog.ShowCompat(window, "请选择这台电脑上已经存在的项目目录。", "目标目录无效", MessageBoxButton.OK, MessageBoxImage.Exclamation);
-			return;
-		}
-		string conflictMode = CurrentConflictMode();
-		ProjectFileConflictMode projectConflictMode = CurrentProjectFileConflictMode();
-		if (!dryRun)
-		{
-			string projectAction = restoreProjectFiles ? ("\n\n项目文件将还原到：\n" + target + "\n项目文件冲突策略：" + ProjectConflictModeText(projectConflictMode)) : "\n\n本次不还原项目文件。";
-			MessageBoxResult messageBoxResult = AppDialog.ShowCompat(window, "即将执行迁移。\n\n会话将导入本机 C 盘 Codex 目录。\n当前会话冲突策略：\n" + ConflictModeConfirmation(conflictMode) + projectAction + "\n\n继续吗？", "确认导入", MessageBoxButton.YesNo, restoreProjectFiles && projectConflictMode == ProjectFileConflictMode.OverwriteWithBackup ? MessageBoxImage.Warning : MessageBoxImage.Question);
-			if (messageBoxResult != MessageBoxResult.Yes)
-			{
-				return;
-			}
-		}
-		SetBusy(busy: true, dryRun ? "正在检查项目与对话迁移包……" : "正在迁移项目与对话……");
-		string temp = null;
-		ProjectRestoreResult projectRestore = null;
-		CctBackupTransaction cctBackupTransaction = null;
-		try
-		{
-			try
-			{
-				List<string> bundlePaths = new List<string>();
-				string projectArchivePath = null;
-				if (loadedIsRawBundle || !BackupPackageFormat.IsFormalPackage(package))
-				{
-					bundlePaths.Add(package);
-				}
-				else
-				{
-					if (loadedManifest == null)
-					{
-						await LoadPackageSummaryAsync(package);
-					}
-					if (loadedManifest == null)
-					{
-						throw new InvalidDataException("无法读取迁移包清单。");
-					}
-					temp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "codex-import-" + Guid.NewGuid().ToString("N"));
-					Directory.CreateDirectory(temp);
-					ExtractZipSafely(package, temp);
-					foreach (string item in loadedManifest.bundles ?? new List<string>())
-					{
-						string fullPath = System.IO.Path.GetFullPath(System.IO.Path.Combine(temp, item));
-						string value = System.IO.Path.GetFullPath(temp).TrimEnd(System.IO.Path.DirectorySeparatorChar) + System.IO.Path.DirectorySeparatorChar;
-						if (!fullPath.StartsWith(value, StringComparison.OrdinalIgnoreCase))
-						{
-							throw new InvalidDataException("迁移包包含不安全路径。");
-						}
-						if (!File.Exists(fullPath))
-						{
-							throw new FileNotFoundException("迁移包内缺少文件：" + item);
-						}
-						bundlePaths.Add(fullPath);
-					}
-					if (restoreProjectFiles)
-					{
-						projectArchivePath = ProjectPayloadService.ResolvePayloadArchivePath(temp, loadedManifest.project_payload);
-						if (!File.Exists(projectArchivePath))
-						{
-							throw new FileNotFoundException("迁移包内缺少项目文件载荷：" + loadedManifest.project_payload.archive_file, projectArchivePath);
-						}
-					}
-				}
-				TargetedThreadIndexer.ValidateBundles(bundlePaths);
-				importLog.Clear();
-				AppendLog(dryRun ? "开始安全检查（不会写入）" : "开始正式导入");
-				ProjectRestorePlan projectPlan = null;
-				if (restoreProjectFiles)
-				{
-					SetStatus("正在校验项目载荷和目标目录……", error: false);
-					projectPlan = await Task.Run(() => ProjectPayloadService.InspectArchive(projectArchivePath, loadedManifest.project_payload, target, projectConflictMode));
-					target = projectPlan.TargetPath;
-					AppendLog($"项目载荷校验通过：{projectPlan.FileCount} 个文件，{ProjectPayloadService.FormatBytes(projectPlan.UncompressedBytes)}；新增 {projectPlan.NewFileCount} 个，同名 {projectPlan.ExistingFileCount} 个。");
-				}
-				string codexHome = CodexCatalog.ResolveCodexHome();
-				Dictionary<string, string> indexedCwds = (mapProjectPath ? CodexCatalog.ReadIndexedThreadCwds() : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
-				int pathMismatchCount = 0;
-				Dictionary<string, HashSet<string>> mismatchByBundle = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
-				foreach (string item2 in bundlePaths)
-				{
-					HashSet<string> hashSet = (mismatchByBundle[item2] = ((mapProjectPath && indexedCwds.Count > 0) ? BundleFreshIdRewriter.FindIndexedPathMismatches(item2, indexedCwds, target) : new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
-					pathMismatchCount += hashSet.Count;
-				}
-				if (!dryRun && pathMismatchCount > 0 && string.Equals(conflictMode, "merge", StringComparison.OrdinalIgnoreCase))
-				{
-					MessageBoxResult messageBoxResult2 = AppDialog.ShowCompat(window, $"检测到 {pathMismatchCount} 个任务的原 ID 仍登记在旧项目路径。\n\n仅使用“智能合并”时，cwd 路径变化会被 cct 当成冲突。本次需要改为“迁移包为准”：覆盖同 ID 的本机旧文件，同时自动保留备份。\n\n是否继续？", "路径迁移需要保留原 ID", MessageBoxButton.YesNo, MessageBoxImage.Question);
-					if (messageBoxResult2 != MessageBoxResult.Yes)
-					{
-						throw new OperationCanceledException("已取消导入；你也可以手动选择“迁移包为准”后重试。");
-					}
-				}
-				DuplicateCleanupResult duplicateCleanup = new DuplicateCleanupResult();
-				if (!dryRun && mapProjectPath)
-				{
-					duplicateCleanup = MigrationDuplicateCleaner.MoveVerifiedLegacyCopies(bundlePaths, codexHome, target);
-					if (duplicateCleanup.MovedCount > 0)
-					{
-						AppendLog($"已将旧版迁移产生的 {duplicateCleanup.MovedCount} 个内容完全相同副本移到可恢复目录：\n{duplicateCleanup.TrashDirectory}");
-					}
-				}
-				HashSet<string> filesBeforeImport = (dryRun ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) : TargetedThreadIndexer.SnapshotSessionFiles(codexHome));
-				if (!dryRun)
-				{
-					cctBackupTransaction = await Task.Run(() => CctBackupTransaction.Begin(codexHome));
-				}
-				if (!dryRun && restoreProjectFiles)
-				{
-					SetStatus("正在把项目文件还原到指定目录……", error: false);
-					projectRestore = await Task.Run(() => ProjectPayloadService.RestoreArchive(projectArchivePath, loadedManifest.project_payload, target, projectConflictMode));
-					AppendLog($"项目文件还原完成：新增 {projectRestore.CreatedFileCount} 个，覆盖 {projectRestore.OverwrittenFileCount} 个，跳过 {projectRestore.SkippedFileCount} 个。\n目标目录：{projectRestore.TargetPath}");
-					if (!string.IsNullOrWhiteSpace(projectRestore.BackupPath))
-					{
-						AppendLog("被覆盖项目文件的备份：" + projectRestore.BackupPath);
-					}
-				}
-				int current3 = 0;
-				foreach (string bundle in bundlePaths)
-				{
-					current3++;
-					SetStatus(string.Format("{0}第 {1}/{2} 个对话包……", dryRun ? "检查" : "导入", current3, bundlePaths.Count), error: false);
-					HashSet<string> mismatched = mismatchByBundle[bundle];
-					if (mismatched.Count > 0)
-					{
-						AppendLog(string.Format(string.Equals(conflictMode, "copy", StringComparison.OrdinalIgnoreCase) ? "检测到 {0} 个同 ID 任务登记在旧项目路径；本次将为迁入版本生成新 ID，并只登记新任务。" : "检测到 {0} 个同 ID 任务登记在旧项目路径；本次将保留原任务 ID，并只更新这些任务的索引。", mismatched.Count));
-					}
-					List<string> args = new List<string> { "import", bundle, "--codex-home", codexHome };
-					string workDir = null;
-					if (mapProjectPath)
-					{
-						string sourceProjectPath = loadedManifest?.source_project;
-						if (string.IsNullOrWhiteSpace(sourceProjectPath) && loadedManifest?.project_payload != null)
-						{
-							sourceProjectPath = loadedManifest.project_payload.source_path;
-						}
-						if (!CctImportPathMapping.AddArguments(args, sourceProjectPath, target, out workDir))
-						{
-							AppendLog("源项目与目标项目相同，已跳过 cwd 映射。");
-						}
-					}
-					string effectiveMode = conflictMode;
-					if (mismatched.Count > 0 && string.Equals(conflictMode, "merge", StringComparison.OrdinalIgnoreCase))
-					{
-						effectiveMode = "replace";
-						AppendLog(dryRun ? "安全检查将按“迁移包为准”模拟路径迁移。" : "路径迁移已切换为“迁移包为准”，本机旧文件将由 cct 自动备份。");
-					}
-					args.AddRange(BuildImportConflictArguments(effectiveMode));
-					if (dryRun)
-					{
-						args.Add("--dry-run");
-					}
-					List<string> plannedIds = BundleFreshIdRewriter.ReadLineages(bundle)
-						.SelectMany(lineage => new string[2] { lineage.CurrentThreadId, lineage.OriginThreadId })
-						.Where(id => !string.IsNullOrWhiteSpace(id))
-						.Distinct(StringComparer.OrdinalIgnoreCase)
-						.ToList();
-					try
-					{
-						CctResult import = await CctRunner.RunAsync(cct, args, workDir);
-						AppendLog("\n> " + import.CommandLine);
-						if (!string.IsNullOrWhiteSpace(import.StdOut))
-						{
-							AppendLog(import.StdOut.TrimEnd());
-						}
-						if (!string.IsNullOrWhiteSpace(import.StdErr))
-						{
-							AppendLog(import.StdErr.TrimEnd());
-						}
-						if (import.ExitCode != 0)
-						{
-							throw new InvalidOperationException("cct 返回错误，详见操作记录。");
-						}
-					}
-					finally
-					{
-						if (!dryRun && cctBackupTransaction != null)
-						{
-							await Task.Run(() => cctBackupTransaction.TrackImportedSessionFiles(TargetedThreadIndexer.SnapshotSessionFiles(codexHome).Where(path => !filesBeforeImport.Contains(path)), plannedIds));
-						}
-					}
-				}
-				if (dryRun)
-				{
-					SetStatus((pathMismatchCount > 0) ? string.Format(string.Equals(conflictMode, "copy", StringComparison.OrdinalIgnoreCase) ? "安全检查完成：{0} 个冲突版本将生成新 ID。" : "安全检查完成：{0} 个任务将保留原 ID并迁移路径。", pathMismatchCount) : "安全检查完成，没有写入项目或会话。", error: false);
-					string projectCheck = (projectPlan == null) ? string.Empty : $"\n\n项目文件检查：{projectPlan.FileCount} 个文件（{ProjectPayloadService.FormatBytes(projectPlan.UncompressedBytes)}），新增 {projectPlan.NewFileCount} 个，同名 {projectPlan.ExistingFileCount} 个。";
-					string conversationCheck = (pathMismatchCount > 0) ? string.Format("\n\n检测到 {0} 个任务仍登记在旧项目。" + (string.Equals(conflictMode, "copy", StringComparison.OrdinalIgnoreCase) ? "正式导入时会为迁入版本生成新 ID，保留本机旧文件，并只登记新任务。" : "正式导入时会保留原 ID、备份本机旧文件，并只更新本次任务索引。"), pathMismatchCount) : "\n\n对话包检查通过。";
-					AppDialog.ShowCompat(window, "检查完成，没有写入项目文件或会话。" + projectCheck + conversationCheck + "\n\n确认操作记录后即可正式导入。", "检查完成", MessageBoxButton.OK, MessageBoxImage.Asterisk);
-					return;
-				}
-				AppendLog("正在备份 Codex 索引，并只登记本次导入的会话……");
-				Dictionary<string, string> dictionary = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-				foreach (PackSession item3 in (loadedManifest == null) ? new List<PackSession>() : (loadedManifest.sessions ?? new List<PackSession>()))
-				{
-					if (item3 != null && !string.IsNullOrWhiteSpace(item3.thread_id))
-					{
-						dictionary[item3.thread_id] = item3.title;
-					}
-				}
-				TargetedIndexResult targetedIndexResult = TargetedThreadIndexer.IndexImportedSessions(codexHome, bundlePaths, filesBeforeImport, string.Equals(conflictMode, "copy", StringComparison.OrdinalIgnoreCase), mapProjectPath ? target : null, dictionary);
-				string paginatedWarning = BuildPaginatedImportWarning(targetedIndexResult.PaginatedCount);
-				if (!string.IsNullOrWhiteSpace(paginatedWarning))
-				{
-					AppendLog("\n" + paginatedWarning);
-				}
-				int removedCctBackups = cctBackupTransaction == null ? 0 : await Task.Run(() => cctBackupTransaction.CommitAndDeleteTemporaryBackups());
-				AppendLog($"定点索引完成：新增 {targetedIndexResult.InsertedCount} 条，更新 {targetedIndexResult.UpdatedCount} 条；全局回填状态未修改。");
-				if (removedCctBackups > 0)
-				{
-					AppendLog($"导入事务已提交，并清理 {removedCctBackups} 个安全快照。");
-				}
-				if (!string.IsNullOrWhiteSpace(targetedIndexResult.BackupPath))
-				{
-					AppendLog("索引备份：" + targetedIndexResult.BackupPath);
-				}
-				bool needsPaginatedVerification = targetedIndexResult.PaginatedCount > 0;
-				SetStatus(needsPaginatedVerification ? (UiLanguage.IsEnglish ? "Import completed; verify paginated conversations in Codex." : "导入完成，请在 Codex 中验证分页会话。") : (projectRestore == null ? "导入完成，本次会话已完成定点登记。" : "项目与对话迁移完成。"), error: false);
-				string text = ((duplicateCleanup.MovedCount > 0) ? $"\n\n另外，已将旧版产生的 {duplicateCleanup.MovedCount} 个重复副本移入可恢复目录：\n{duplicateCleanup.TrashDirectory}" : string.Empty);
-				string projectSuccess = (projectRestore == null) ? string.Empty : $"项目文件已还原到：\n{projectRestore.TargetPath}\n新增 {projectRestore.CreatedFileCount} 个，覆盖 {projectRestore.OverwrittenFileCount} 个，跳过 {projectRestore.SkippedFileCount} 个。\n\n" + (string.IsNullOrWhiteSpace(projectRestore.BackupPath) ? string.Empty : ("项目覆盖备份：\n" + projectRestore.BackupPath + "\n\n"));
-				AppDialog.ShowCompat(window, projectSuccess + $"对话已导入 C 盘 Codex 目录并完成定点索引。\n\n新增索引 {targetedIndexResult.InsertedCount} 条，更新索引 {targetedIndexResult.UpdatedCount} 条。\n全局会话回填状态保持原值，不会扫描全部历史会话。" + (string.IsNullOrWhiteSpace(paginatedWarning) ? string.Empty : "\n\n" + paginatedWarning) + "\n\n请完全退出并重新打开 Codex，让侧栏重新读取索引并实际打开对应对话。" + text + (string.IsNullOrWhiteSpace(targetedIndexResult.BackupPath) ? string.Empty : ("\n\n索引备份：\n" + targetedIndexResult.BackupPath)), needsPaginatedVerification ? (UiLanguage.IsEnglish ? "Import completed · verification required" : "迁移完成 · 需要验证") : "迁移成功", MessageBoxButton.OK, needsPaginatedVerification ? MessageBoxImage.Warning : MessageBoxImage.Asterisk);
-			}
-			catch (OperationCanceledException ex)
-			{
-				await RollbackCctImportAsync(cctBackupTransaction);
-				AppendLog("\n" + ex.Message);
-				SetStatus("操作已取消，没有继续导入。", error: false);
-			}
-			catch (Exception ex2)
-			{
-				await RollbackCctImportAsync(cctBackupTransaction);
-				if (projectRestore != null)
-				{
-					AppendLog("\n注意：项目文件已还原到 " + projectRestore.TargetPath + "，但后续会话导入未完成。重试时可取消“还原项目文件”，或选择“跳过同名文件”，避免再次改动已有项目文件。");
-				}
-				AppendLog("\n失败：" + ex2.Message);
-				SetStatus("操作失败：" + ex2.Message, error: true);
-				AppDialog.ShowCompat(window, ex2.Message, dryRun ? "检查失败" : "导入失败", MessageBoxButton.OK, MessageBoxImage.Hand);
-			}
-		}
-		finally
-		{
-			if (temp != null)
-			{
-				TryDeleteDirectory(temp);
-			}
-			SetBusy(busy: false, null);
+			AppendLog("警告：清理导入事务安全快照失败：" + cleanupError.Message);
 		}
 	}
 
@@ -4053,13 +4610,11 @@ internal sealed class MainWindowController
 		window.Cursor = (busy ? System.Windows.Input.Cursors.Wait : System.Windows.Input.Cursors.Arrow);
 		refreshButton.IsEnabled = !busy;
 		closeButton.IsEnabled = !busy;
-		browseCctButton.IsEnabled = !busy;
 		browseBackupFolderButton.IsEnabled = !busy;
 		browsePackageButton.IsEnabled = !busy;
 		browseTargetButton.IsEnabled = !busy;
 		packagePathBox.IsReadOnly = busy;
 		targetPathBox.IsReadOnly = busy;
-		cctPathBox.IsReadOnly = busy;
 		mapPathCheck.IsEnabled = !busy;
 		backupTabButton.IsEnabled = !busy;
 		importTabButton.IsEnabled = !busy;
@@ -4077,7 +4632,6 @@ internal sealed class MainWindowController
 		mergeModeRadio.IsEnabled = !busy;
 		copyModeRadio.IsEnabled = !busy;
 		projectList.IsEnabled = !busy;
-		fullFidelityCheck.IsEnabled = !busy;
 		UpdateSessionTypeView();
 		UpdateSelectedCount();
 		UpdateProjectRestoreControls();
@@ -4114,33 +4668,6 @@ internal sealed class MainWindowController
 		return (Brush)new BrushConverter().ConvertFromString(color);
 	}
 
-	private static void ExtractZipSafely(string zipPath, string destination)
-	{
-		string value = System.IO.Path.GetFullPath(destination).TrimEnd(System.IO.Path.DirectorySeparatorChar) + System.IO.Path.DirectorySeparatorChar;
-		using ZipArchive zipArchive = ZipFile.OpenRead(zipPath);
-		foreach (ZipArchiveEntry entry in zipArchive.Entries)
-		{
-			string fullPath = System.IO.Path.GetFullPath(System.IO.Path.Combine(destination, entry.FullName));
-			if (!fullPath.StartsWith(value, StringComparison.OrdinalIgnoreCase))
-			{
-				throw new InvalidDataException("迁移包包含越界路径，已拒绝解压。");
-			}
-			if (string.IsNullOrEmpty(entry.Name))
-			{
-				Directory.CreateDirectory(fullPath);
-				continue;
-			}
-			string directoryName = System.IO.Path.GetDirectoryName(fullPath);
-			if (!Directory.Exists(directoryName))
-			{
-				Directory.CreateDirectory(directoryName);
-			}
-			using Stream stream = entry.Open();
-			using FileStream destination2 = new FileStream(fullPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-			stream.CopyTo(destination2);
-		}
-	}
-
 	private static void TryDeleteDirectory(string path)
 	{
 		try
@@ -4160,5 +4687,16 @@ internal sealed class MainWindowController
 		public SessionInfo Root { get; set; }
 
 		public List<SessionInfo> AffectedSessions { get; set; }
+	}
+
+	private sealed class BatchProjectDeleteScope
+	{
+		public string ProjectPath { get; set; }
+
+		public int TotalMainConversationCount { get; set; }
+
+		public bool AllMainConversationsSelected { get; set; }
+
+		public string AvailabilityBlockReason { get; set; }
 	}
 }

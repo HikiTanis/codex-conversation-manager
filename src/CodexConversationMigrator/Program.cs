@@ -19,7 +19,6 @@ internal static class Program
 	[STAThread]
 	private static int Main(string[] args)
 	{
-		string preferred = string.Empty;
 		string report = string.Empty;
 		string text = string.Empty;
 		string language = string.Empty;
@@ -32,10 +31,6 @@ internal static class Program
 			if (string.Equals(args[i], "--self-test", StringComparison.OrdinalIgnoreCase))
 			{
 				flag = true;
-			}
-			else if (string.Equals(args[i], "--cct", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
-			{
-				preferred = args[++i];
 			}
 			else if (string.Equals(args[i], "--report", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
 			{
@@ -59,15 +54,14 @@ internal static class Program
 				language = args[++i];
 			}
 		}
-		string text4 = CctRunner.ResolveCctPath(preferred);
 		UiLanguage.Initialize(language);
 		if (flag)
 		{
-			return RunSelfTest(text4, report);
+			return RunSelfTest(report);
 		}
 		if (!string.IsNullOrWhiteSpace(text))
 		{
-			return RunBundleTest(text4, text, output);
+			return RunBundleTest(text, output);
 		}
 		if (!string.IsNullOrWhiteSpace(text2))
 		{
@@ -79,18 +73,18 @@ internal static class Program
 			{
 				return RunDialogThemeRenderTest(text2);
 			}
-			return RunRenderTest(text4, text2);
+			return RunRenderTest(text2);
 		}
 		if (!string.IsNullOrWhiteSpace(text3))
 		{
-			return RunChromeTest(text4, text3);
+			return RunChromeTest(text3);
 		}
 		try
 		{
 			Application application = new Application();
 			application.ShutdownMode = ShutdownMode.OnMainWindowClose;
 			Application application2 = application;
-			MainWindowController mainWindowController = new MainWindowController(text4);
+			MainWindowController mainWindowController = new MainWindowController();
 			application2.MainWindow = mainWindowController.Window;
 			return application2.Run(mainWindowController.Window);
 		}
@@ -109,21 +103,12 @@ internal static class Program
 		}
 	}
 
-	private static int RunBundleTest(string cct, string threadId, string output)
+	private static int RunBundleTest(string threadId, string output)
 	{
 		try
 		{
-			if (string.IsNullOrWhiteSpace(cct))
-			{
-				throw new FileNotFoundException("cct.exe not found");
-			}
-			CctResult cctResult = CctRunner.Run(cct, new string[3] { "list", "--json", "--include-archived" }, null);
-			if (cctResult.ExitCode != 0)
-			{
-				throw new InvalidOperationException(CctRunner.FirstUseful(cctResult));
-			}
-			List<SessionInfo> cctSessions = CctRunner.ParseSessions(cctResult.StdOut);
-			CatalogResult catalogResult = CodexCatalog.Build(cctSessions);
+			List<SessionInfo> nativeSessions = NativeSessionCatalog.ScanDefault();
+			CatalogResult catalogResult = CodexCatalog.Build(nativeSessions);
 			SessionInfo sessionInfo = catalogResult.Projects.SelectMany((ProjectGroup x) => x.Sessions).FirstOrDefault((SessionInfo x) => string.Equals(x.ThreadId, threadId, StringComparison.OrdinalIgnoreCase));
 			if (sessionInfo == null)
 			{
@@ -138,14 +123,14 @@ internal static class Program
 		}
 	}
 
-	private static int RunChromeTest(string cct, string output)
+	private static int RunChromeTest(string output)
 	{
 		try
 		{
 			Application application = new Application();
 			application.ShutdownMode = ShutdownMode.OnMainWindowClose;
 			Application application2 = application;
-			MainWindowController controller = new MainWindowController(cct);
+			MainWindowController controller = new MainWindowController();
 			application2.MainWindow = controller.Window;
 			bool tested = false;
 			controller.Window.ContentRendered += async delegate
@@ -305,7 +290,7 @@ internal static class Program
 		}
 	}
 
-	private static int RunRenderTest(string cct, string output)
+	private static int RunRenderTest(string output)
 	{
 		try
 		{
@@ -324,7 +309,7 @@ internal static class Program
 			};
 			application.ShutdownMode = ShutdownMode.OnMainWindowClose;
 			Application application2 = application;
-			MainWindowController controller = new MainWindowController(cct);
+			MainWindowController controller = new MainWindowController();
 			application2.MainWindow = controller.Window;
 			bool captured = false;
 			controller.Window.ContentRendered += async delegate
@@ -380,6 +365,18 @@ internal static class Program
 						{
 							throw new InvalidOperationException("conversation preview resize handles did not resize the dialog");
 						}
+						if (renderName.Contains("responsive") && !controller.TestConversationFollowsWindowResizeForTest())
+						{
+							throw new InvalidOperationException("conversation preview did not follow main-window size changes");
+						}
+						if (renderName.Contains("long") && !controller.TestLongConversationPreviewForTest())
+						{
+							throw new InvalidOperationException("long conversation preview was truncated, did not open at the latest message, or its navigation rail failed");
+						}
+						if (renderName.Contains("rail") && !controller.ShowConversationNavigationPreviewForTest())
+						{
+							throw new InvalidOperationException("user-message navigation hover preview did not open");
+						}
 					}
 					else if (renderName.Contains("subagent"))
 					{
@@ -417,6 +414,13 @@ internal static class Program
 						if (!(await controller.WaitForSelectedProjectStorageForTest()))
 						{
 							throw new InvalidOperationException("project storage metrics did not complete");
+						}
+					}
+					else if (renderName.Contains("default-backup"))
+					{
+						if (!controller.IsConversationBackupDefaultForTest())
+						{
+							throw new InvalidOperationException("conversation-only backup was not the default mode");
 						}
 					}
 					else if (renderName.Contains("conversation-backup"))
@@ -500,7 +504,7 @@ internal static class Program
 					}
 				}
 			};
-			File.WriteAllText(sessionPath, CctRunner.NewSerializer().Serialize(sessionMeta) + Environment.NewLine, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			File.WriteAllText(sessionPath, JsonSerialization.NewSerializer().Serialize(sessionMeta) + Environment.NewLine, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 			CodexAppServerThreadDeletion.TestOverride = null;
 			OfficialThreadDeletionResult result = CodexAppServerThreadDeletion.DeleteThread(root, threadId);
 			if (!result.Succeeded || File.Exists(sessionPath))
@@ -524,7 +528,7 @@ internal static class Program
 		}
 	}
 
-	private static string RunFeatureSafetyTest(string cct)
+	private static string RunFeatureSafetyTest()
 	{
 		string environmentVariable = Environment.GetEnvironmentVariable("CODEX_HOME");
 		bool runRealOfficialDelete = Environment.GetEnvironmentVariable("CODEX_MIGRATOR_REAL_OFFICIAL_DELETE_TEST") == "1";
@@ -585,7 +589,7 @@ internal static class Program
 			Directory.CreateDirectory(text2);
 			string testThreadId = "11111111-1111-4111-8111-111111111111";
 			string text3 = Path.Combine(text2, "rollout-2026-01-02T03-04-05-" + testThreadId + ".jsonl");
-			JavaScriptSerializer javaScriptSerializer = CctRunner.NewSerializer();
+			JavaScriptSerializer javaScriptSerializer = JsonSerialization.NewSerializer();
 			Dictionary<string, object> dictionary = new Dictionary<string, object>();
 			dictionary.Add("ordinal", 0);
 			dictionary.Add("timestamp", "2026-01-02T03:04:05Z");
@@ -656,7 +660,35 @@ internal static class Program
 				}
 			});
 			Dictionary<string, object> obj3 = dictionary3;
-			string fixtureContents = javaScriptSerializer.Serialize(obj) + Environment.NewLine + javaScriptSerializer.Serialize(objContext) + Environment.NewLine + javaScriptSerializer.Serialize(obj2) + Environment.NewLine + javaScriptSerializer.Serialize(obj3) + Environment.NewLine;
+			Dictionary<string, object> duplicateUserMessage = new Dictionary<string, object>
+			{
+				{ "timestamp", "2026-01-02T03:06:07Z" },
+				{ "type", "response_item" },
+				{ "ordinal", 4 },
+				{
+					"payload",
+					new Dictionary<string, object>
+					{
+						{ "type", "message" },
+						{ "role", "user" },
+						{
+							"content",
+							new object[1]
+							{
+								new Dictionary<string, object>
+								{
+									{ "type", "input_text" },
+									{ "text", "继续" }
+								}
+							}
+						}
+					}
+				}
+			};
+			Dictionary<string, object> duplicateUserMessage2 = new Dictionary<string, object>(duplicateUserMessage);
+			duplicateUserMessage2["ordinal"] = 5;
+			duplicateUserMessage2["timestamp"] = "2026-01-02T03:06:08Z";
+			string fixtureContents = javaScriptSerializer.Serialize(obj) + Environment.NewLine + javaScriptSerializer.Serialize(objContext) + Environment.NewLine + javaScriptSerializer.Serialize(obj2) + Environment.NewLine + javaScriptSerializer.Serialize(obj3) + Environment.NewLine + javaScriptSerializer.Serialize(duplicateUserMessage) + Environment.NewLine + javaScriptSerializer.Serialize(duplicateUserMessage2) + Environment.NewLine;
 			File.WriteAllText(text3, fixtureContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 			ThreadIndexMetadata paginatedMetadata = TargetedThreadIndexer.ReadMetadataForTest(text3, "功能测试", "真正的问题");
 			if (!string.Equals(paginatedMetadata.HistoryMode, CodexHistoryMode.Paginated, StringComparison.Ordinal) ||
@@ -709,16 +741,12 @@ internal static class Program
 			sessionInfo.UpdatedDate = new DateTime(2026, 1, 2, 3, 5, 6, DateTimeKind.Utc);
 			SessionInfo session = sessionInfo;
 			ConversationReadResult conversationReadResult = ConversationReader.Read(session);
-			if (conversationReadResult.Messages.Count != 2 || conversationReadResult.Messages[0].Text != "真正的问题" || conversationReadResult.Messages[1].Text != "这是回答。")
+			if (conversationReadResult.Messages.Count != 4 ||
+				conversationReadResult.Messages.Any(message => message.DeferredLength <= 0 || !string.Equals(message.DeferredPath, text3, StringComparison.OrdinalIgnoreCase)) ||
+				conversationReadResult.Messages[0].Text != "真正的问题" || conversationReadResult.Messages[1].Text != "这是回答。" ||
+				conversationReadResult.Messages[2].Text != "继续" || conversationReadResult.Messages[3].Text != "继续")
 			{
-				throw new InvalidOperationException("conversation preview parser test failed");
-			}
-			string text4 = string.Join(" ", MainWindowController.BuildImportConflictArguments("merge").ToArray());
-			string text5 = string.Join(" ", MainWindowController.BuildImportConflictArguments("copy").ToArray());
-			string text6 = string.Join(" ", MainWindowController.BuildImportConflictArguments("replace").ToArray());
-			if (text4 != "--merge" || text5 != "--merge" || text6 != "--merge")
-			{
-				throw new InvalidOperationException("import conflict arguments test failed");
+				throw new InvalidOperationException("conversation preview lazy parser or duplicate preservation test failed");
 			}
 			if (BackupPackageFormat.ExtensionFor(includesProjectFiles: false) != ".codexchat" || BackupPackageFormat.ExtensionFor(includesProjectFiles: true) != ".codexproject" ||
 				!BackupPackageFormat.IsFormalPackage("legacy.codexpack") || !BackupPackageFormat.IsFormalPackage("chat.codexchat") || !BackupPackageFormat.IsFormalPackage("project.codexproject") ||
@@ -726,26 +754,13 @@ internal static class Program
 			{
 				throw new InvalidOperationException("formal backup extension test failed");
 			}
-			List<string> samePathArguments = new List<string>();
-			bool samePathMapped = CctImportPathMapping.AddArguments(samePathArguments, @"E:\work\same-project", @"E:\work\same-project\.", out string samePathWorkDirectory);
-			if (samePathMapped || samePathArguments.Count != 0 || samePathWorkDirectory != null)
-			{
-				throw new InvalidOperationException("same-path cwd mapping was not skipped");
-			}
-			List<string> changedPathArguments = new List<string>();
-			bool changedPathMapped = CctImportPathMapping.AddArguments(changedPathArguments, @"D:\old-project", @"E:\new-project", out string changedPathWorkDirectory);
-			if (!changedPathMapped || changedPathArguments.Count != 2 || changedPathArguments[0] != "--map-cwd" || changedPathArguments[1] != @"D:\old-project=E:\new-project" || changedPathWorkDirectory != null)
-			{
-				throw new InvalidOperationException("changed-path cwd mapping test failed");
-			}
-
-			string transactionFolder = Path.Combine(text2, "cct-backup-transaction");
+			string transactionFolder = Path.Combine(text2, "native-import-transaction");
 			Directory.CreateDirectory(transactionFolder);
 			string rollbackActive = Path.Combine(transactionFolder, "rollout-rollback.jsonl");
 			string rollbackOriginal = "rollback-original";
 			File.WriteAllText(rollbackActive, rollbackOriginal, Encoding.UTF8);
-			CctBackupTransaction rollbackTransaction = CctBackupTransaction.Begin(text);
-			string rollbackBackup = rollbackActive + ".cct-bak-100";
+			NativeImportTransaction rollbackTransaction = NativeImportTransaction.Begin(text);
+			string rollbackBackup = rollbackActive + ".ccm-txn-bak-100";
 			File.Copy(rollbackActive, rollbackBackup);
 			File.WriteAllText(rollbackActive, "rollback-mutated", Encoding.UTF8);
 			string rollbackImportedId = "77777777-7777-4777-8777-777777777777";
@@ -754,37 +769,37 @@ internal static class Program
 			File.WriteAllText(rollbackImported, "planned-import", Encoding.UTF8);
 			File.WriteAllText(rollbackUnrelated, "unrelated-new-file", Encoding.UTF8);
 			rollbackTransaction.TrackImportedSessionFiles(new string[2] { rollbackImported, rollbackUnrelated }, new string[1] { rollbackImportedId });
-			CctBackupRollbackResult rollbackResult = rollbackTransaction.RollbackAndDeleteTemporaryBackups();
+			ImportTransactionRollbackResult rollbackResult = rollbackTransaction.RollbackAndDeleteTemporaryBackups();
 			if (rollbackResult.RestoredCount != 1 || rollbackResult.DeletedCount != 1 || rollbackResult.RemovedImportedCount != 1 || File.Exists(rollbackBackup) || File.Exists(rollbackImported) || !File.Exists(rollbackUnrelated) || File.ReadAllText(rollbackActive, Encoding.UTF8) != rollbackOriginal)
 			{
-				throw new InvalidOperationException("cct backup rollback-and-clean test failed");
+				throw new InvalidOperationException("native import transaction rollback-and-clean test failed");
 			}
 
 			string commitActive = Path.Combine(transactionFolder, "rollout-commit.jsonl");
 			File.WriteAllText(commitActive, "commit-original", Encoding.UTF8);
-			CctBackupTransaction commitTransaction = CctBackupTransaction.Begin(text);
-			string commitBackup = commitActive + ".cct-bak-101";
+			NativeImportTransaction commitTransaction = NativeImportTransaction.Begin(text);
+			string commitBackup = commitActive + ".ccm-txn-bak-101";
 			File.Copy(commitActive, commitBackup);
 			File.WriteAllText(commitActive, "commit-current", Encoding.UTF8);
 			int committedBackupCount = commitTransaction.CommitAndDeleteTemporaryBackups();
 			if (committedBackupCount != 1 || File.Exists(commitBackup) || File.ReadAllText(commitActive, Encoding.UTF8) != "commit-current")
 			{
-				throw new InvalidOperationException("cct backup commit-and-clean test failed");
+				throw new InvalidOperationException("native import transaction commit-and-clean test failed");
 			}
 
 			string cleanupFailureActive = Path.Combine(transactionFolder, "rollout-commit-cleanup-failure.jsonl");
 			File.WriteAllText(cleanupFailureActive, "cleanup-original", Encoding.UTF8);
-			CctBackupTransaction cleanupFailureTransaction = CctBackupTransaction.Begin(text);
-			string cleanupFailureBackup = cleanupFailureActive + ".cct-bak-102";
+			NativeImportTransaction cleanupFailureTransaction = NativeImportTransaction.Begin(text);
+			string cleanupFailureBackup = cleanupFailureActive + ".ccm-txn-bak-102";
 			File.Copy(cleanupFailureActive, cleanupFailureBackup);
 			File.WriteAllText(cleanupFailureActive, "cleanup-current", Encoding.UTF8);
 			string stagedFailureSnapshot = string.Empty;
-			CctBackupTransaction.CommitCleanupFailureForTest = _ => true;
+			NativeImportTransaction.CommitCleanupFailureForTest = _ => true;
 			try
 			{
 				int cleanupFailureCount = cleanupFailureTransaction.CommitAndDeleteTemporaryBackups();
-				CctBackupRollbackResult postCommitRollback = cleanupFailureTransaction.RollbackAndDeleteTemporaryBackups();
-				string cleanupRoot = CctBackupMaintenance.TransactionCleanupRoot(text);
+				ImportTransactionRollbackResult postCommitRollback = cleanupFailureTransaction.RollbackAndDeleteTemporaryBackups();
+				string cleanupRoot = ImportSnapshotMaintenance.TransactionCleanupRoot(text);
 				string[] stagedSnapshots = Directory.Exists(cleanupRoot)
 					? Directory.GetFiles(cleanupRoot, "snapshot-*.jsonl", SearchOption.AllDirectories)
 					: Array.Empty<string>();
@@ -799,12 +814,12 @@ internal static class Program
 			}
 			finally
 			{
-				CctBackupTransaction.CommitCleanupFailureForTest = null;
+				NativeImportTransaction.CommitCleanupFailureForTest = null;
 				if (!string.IsNullOrWhiteSpace(stagedFailureSnapshot) && File.Exists(stagedFailureSnapshot))
 				{
 					string stagingDirectory = Path.GetDirectoryName(stagedFailureSnapshot);
 					File.Delete(stagedFailureSnapshot);
-					CctBackupMaintenance.DeleteEmptyTransactionCleanupDirectories(stagingDirectory);
+					ImportSnapshotMaintenance.DeleteEmptyTransactionCleanupDirectories(stagingDirectory);
 				}
 			}
 			File.Delete(rollbackActive);
@@ -819,18 +834,18 @@ internal static class Program
 			using (ZipArchive zipArchive = ZipFile.Open(text9, ZipArchiveMode.Create))
 			{
 				ZipArchiveEntry zipArchiveEntry = zipArchive.CreateEntry("manifest.json");
-				CctBundleManifest cctBundleManifest = new CctBundleManifest();
-				cctBundleManifest.format_version = "1";
-				cctBundleManifest.sessions = new List<CctBundleSession>
+				BundleManifest bundleManifest = new BundleManifest();
+				bundleManifest.format_version = "1";
+				bundleManifest.sessions = new List<BundleSession>
 				{
-					new CctBundleSession
+					new BundleSession
 					{
 						thread_id = testThreadId,
 						bundle_path = "sessions/test.jsonl.zst",
 						compressed = true
 					}
 				};
-				CctBundleManifest obj4 = cctBundleManifest;
+				BundleManifest obj4 = bundleManifest;
 				using StreamWriter streamWriter = new StreamWriter(zipArchiveEntry.Open(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 				streamWriter.Write(javaScriptSerializer.Serialize(obj4));
 			}
@@ -870,17 +885,17 @@ internal static class Program
 				{
 					throw new InvalidOperationException("rewritten manifest missing");
 				}
-				CctBundleManifest cctBundleManifest2;
+				BundleManifest bundleManifest2;
 				using (StreamReader streamReader = new StreamReader(entry.Open(), Encoding.UTF8))
 				{
-					cctBundleManifest2 = javaScriptSerializer.Deserialize<CctBundleManifest>(streamReader.ReadToEnd());
+					bundleManifest2 = javaScriptSerializer.Deserialize<BundleManifest>(streamReader.ReadToEnd());
 				}
-				CctBundleSession cctBundleSession = cctBundleManifest2.sessions.Single();
-				if (cctBundleSession.thread_id != text10 || cctBundleSession.origin_thread_id != testThreadId || cctBundleSession.bundle_path.IndexOf(text10, StringComparison.OrdinalIgnoreCase) < 0)
+				BundleSession bundleSession = bundleManifest2.sessions.Single();
+				if (bundleSession.thread_id != text10 || bundleSession.origin_thread_id != testThreadId || bundleSession.bundle_path.IndexOf(text10, StringComparison.OrdinalIgnoreCase) < 0)
 				{
 					throw new InvalidOperationException("rewritten manifest still uses old thread ID");
 				}
-				ZipArchiveEntry entry2 = zipArchive2.GetEntry(cctBundleSession.bundle_path);
+				ZipArchiveEntry entry2 = zipArchive2.GetEntry(bundleSession.bundle_path);
 				if (entry2 == null)
 				{
 					throw new InvalidOperationException("rewritten session entry missing");
@@ -897,20 +912,12 @@ internal static class Program
 				}
 			}
 			ConversationLineageSelfTest.Run(Path.Combine(text, "lineage-selftest"));
-			CctResult cctResult = CctRunner.Run(cct, new string[5]
+			NativeBundleImportResult freshImport = NativeBundleImporter.Import(text8, text, "C:\\fake-project", newProject, NativeBundleImportMode.Merge, dryRun: false);
+			if (freshImport.CreatedCount != 1)
 			{
-				"import",
-				text8,
-				"--map-cwd",
-				"C:\\fake-project=" + newProject,
-				"--merge"
-			}, null);
-			if (cctResult.ExitCode != 0)
-			{
-				throw new InvalidOperationException("cct rejected legacy fresh ID bundle: " + CctRunner.FirstUseful(cctResult));
+				throw new InvalidOperationException("native fresh-ID import did not create one conversation");
 			}
-			CctResult cctResult2 = CctRunner.Run(cct, new string[3] { "list", "--json", "--include-archived" }, null);
-			if (cctResult2.ExitCode != 0 || CctRunner.ParseSessions(cctResult2.StdOut).Count != 2)
+			if (NativeSessionCatalog.Scan(text).Count != 2)
 			{
 				throw new InvalidOperationException("independent copy import setup failed");
 			}
@@ -919,9 +926,8 @@ internal static class Program
 				string.Equals(ConversationLineage.ResolveCurrentThreadId(payload, string.Empty), text10, StringComparison.OrdinalIgnoreCase) &&
 				string.Equals(ConversationLineage.ResolveOriginThreadId(payload, text10), testThreadId, StringComparison.OrdinalIgnoreCase));
 			if (!importedLineagePersisted)
-				throw new InvalidOperationException("cct import did not preserve the immutable origin Thread ID");
-			CctResult cctResult3 = CctRunner.Run(cct, new string[3] { "list", "--json", "--include-archived" }, null);
-			if (cctResult3.ExitCode != 0 || CctRunner.ParseSessions(cctResult3.StdOut).Count != 2)
+				throw new InvalidOperationException("native import did not preserve the immutable origin Thread ID");
+			if (NativeSessionCatalog.Scan(text).Count != 2)
 			{
 				throw new InvalidOperationException("independent conversation copy was unexpectedly removed");
 			}
@@ -936,25 +942,15 @@ internal static class Program
 			}, testThreadId, oldDesktopProjectId, "C:\\fake-project");
 			string text12 = WinSqliteMaintenance.ReadBackfillState(databasePath);
 			HashSet<string> filesBeforeImport = TargetedThreadIndexer.SnapshotSessionFiles(text);
-			CctResult cctResult4 = CctRunner.Run(cct, new string[6]
-			{
-				"import",
-				text7,
-				"--map-cwd",
-				"C:\\fake-project=" + newProject,
-				"--merge",
-				"--replace-with-backup"
-			}, null);
-			if (cctResult4.ExitCode != 0)
-			{
-				throw new InvalidOperationException("cct rejected targeted-index setup import: " + CctRunner.FirstUseful(cctResult4));
-			}
+			NativeImportTransaction targetedImportTransaction = NativeImportTransaction.Begin(text);
+			NativeBundleImporter.Import(text7, text, "C:\\fake-project", newProject, NativeBundleImportMode.Replace, dryRun: false);
 			Dictionary<string, string> dictionary5 = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 			dictionary5.Add(testThreadId, "功能测试");
 			Dictionary<string, string> dictionary6 = dictionary5;
 			TargetedIndexResult targetedIndexResult = TargetedThreadIndexer.IndexImportedSessions(text, new string[1] { text7 }, filesBeforeImport, copiesOnly: false, newProject, dictionary6);
 			dictionary6[testThreadId] = "功能测试（已更新）";
 			TargetedIndexResult targetedIndexResult2 = TargetedThreadIndexer.IndexImportedSessions(text, new string[1] { text7 }, filesBeforeImport, copiesOnly: false, newProject, dictionary6);
+			targetedImportTransaction.CommitAndDeleteTemporaryBackups();
 			string text13 = WinSqliteMaintenance.ReadBackfillState(databasePath);
 			DbThread dbThread = WinSqliteReader.ReadThreads(databasePath).Single();
 			if (targetedIndexResult.InsertedCount != 1 || targetedIndexResult.UpdatedCount != 0 || targetedIndexResult2.InsertedCount != 0 || targetedIndexResult2.UpdatedCount != 1 || text13 != text12 || !text13.StartsWith("complete\u001f", StringComparison.Ordinal) || !File.Exists(targetedIndexResult.BackupPath) || WinSqliteMaintenance.IntegrityCheck(targetedIndexResult.BackupPath) != "ok" || WinSqliteMaintenance.ReadBackfillState(targetedIndexResult.BackupPath) != text12 || WinSqliteReader.ReadThreads(targetedIndexResult.BackupPath).Count != 0 || !string.Equals(dbThread.Id, testThreadId, StringComparison.OrdinalIgnoreCase) || dbThread.Title != "功能测试（已更新）" || !string.Equals(TextHelpers.CanonicalPath(dbThread.Cwd), TextHelpers.CanonicalPath(newProject), StringComparison.OrdinalIgnoreCase))
@@ -1048,12 +1044,8 @@ internal static class Program
 				Directory.CreateDirectory(mappedTargetTwo);
 				WriteDesktopStateFixtureForTest(mappedHome, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase), null, null, null);
 				HashSet<string> mappedBefore = TargetedThreadIndexer.SnapshotSessionFiles(mappedHome);
-				CctResult mappedImportOne = CctRunner.Run(cct, new string[5] { "import", text7, "--map-cwd", "C:\\fake-project=" + mappedTargetOne, "--merge" }, null);
-				CctResult mappedImportTwo = CctRunner.Run(cct, new string[5] { "import", secondBundle, "--map-cwd", "C:\\fake-project-two=" + mappedTargetTwo, "--merge" }, null);
-				if (mappedImportOne.ExitCode != 0 || mappedImportTwo.ExitCode != 0)
-				{
-					throw new InvalidOperationException("multi-project mapped import setup failed");
-				}
+				NativeBundleImporter.Import(text7, mappedHome, "C:\\fake-project", mappedTargetOne, NativeBundleImportMode.Merge, dryRun: false);
+				NativeBundleImporter.Import(secondBundle, mappedHome, "C:\\fake-project-two", mappedTargetTwo, NativeBundleImportMode.Merge, dryRun: false);
 				Dictionary<string, string> targetsByBundle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 				{
 					{ Path.GetFullPath(text7), mappedTargetOne },
@@ -1114,39 +1106,23 @@ internal static class Program
 				Environment.SetEnvironmentVariable("CODEX_HOME", text17);
 				string databasePath3 = Path.Combine(text17, "state_5.sqlite");
 				WinSqliteMaintenance.CreateTargetedIndexTestDatabase(databasePath3);
-				CctResult cctResult5 = CctRunner.Run(cct, new string[5]
-				{
-					"import",
-					text7,
-					"--map-cwd",
-					"C:\\fake-project=" + newProject,
-					"--merge"
-				}, null);
-				if (cctResult5.ExitCode != 0)
-				{
-					throw new InvalidOperationException("cct rejected copy-mode seed import: " + CctRunner.FirstUseful(cctResult5));
-				}
+				HashSet<string> filesBeforeCopyImports = TargetedThreadIndexer.SnapshotSessionFiles(text17);
+				NativeBundleImporter.Import(text7, text17, "C:\\fake-project", newProject, NativeBundleImportMode.Merge, dryRun: false);
 				string path = TargetedThreadIndexer.SnapshotSessionFiles(text17).Single();
 				string contents = File.ReadAllText(path, Encoding.UTF8).Replace("这是回答。", "这是本机分支回答。");
 				File.WriteAllText(path, contents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-				HashSet<string> filesBeforeImport2 = TargetedThreadIndexer.SnapshotSessionFiles(text17);
 				string text18 = WinSqliteMaintenance.ReadBackfillState(databasePath3);
-				CctResult cctResult6 = CctRunner.Run(cct, new string[6]
+				string freshCopyBundle = Path.Combine(text17, "copy-fresh.codexbundle");
+				FreshIdRewriteResult copyRewrite = BundleFreshIdRewriter.RewriteAsFresh(text7, freshCopyBundle);
+				string copiedThreadId = copyRewrite.IdMap[testThreadId];
+				NativeBundleImporter.Import(freshCopyBundle, text17, "C:\\fake-project", newProject, NativeBundleImportMode.Merge, dryRun: false);
+				Dictionary<string, string> copyTitles = new Dictionary<string, string>(dictionary6, StringComparer.OrdinalIgnoreCase)
 				{
-					"import",
-					text7,
-					"--map-cwd",
-					"C:\\fake-project=" + newProject,
-					"--merge",
-					"--import-as-copy"
-				}, null);
-				if (cctResult6.ExitCode != 0)
-				{
-					throw new InvalidOperationException("cct rejected copy-mode conflict import: " + CctRunner.FirstUseful(cctResult6));
-				}
-				TargetedIndexResult targetedIndexResult3 = TargetedThreadIndexer.IndexImportedSessions(text17, new string[1] { text7 }, filesBeforeImport2, copiesOnly: true, newProject, dictionary6);
+					[copiedThreadId] = dictionary6[testThreadId]
+				};
+				TargetedIndexResult targetedIndexResult3 = TargetedThreadIndexer.IndexImportedSessions(text17, new string[2] { text7, freshCopyBundle }, filesBeforeCopyImports, copiesOnly: false, newProject, copyTitles);
 				List<DbThread> list = WinSqliteReader.ReadThreads(databasePath3);
-				if (targetedIndexResult3.InsertedCount != 2 || targetedIndexResult3.UpdatedCount != 0 || targetedIndexResult3.IndexedCount != 2 || list.Count != 2 || WinSqliteMaintenance.ReadBackfillState(databasePath3) != text18 || !list.Any((DbThread item) => string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)) || !list.Any((DbThread item) => !string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)) || list.Any((DbThread item) => !string.Equals(TextHelpers.CanonicalPath(item.Cwd), TextHelpers.CanonicalPath(newProject), StringComparison.OrdinalIgnoreCase)))
+				if (targetedIndexResult3.InsertedCount != 2 || targetedIndexResult3.UpdatedCount != 0 || targetedIndexResult3.IndexedCount != 2 || list.Count != 2 || WinSqliteMaintenance.ReadBackfillState(databasePath3) != text18 || !list.Any((DbThread item) => string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)) || !list.Any((DbThread item) => string.Equals(item.Id, copiedThreadId, StringComparison.OrdinalIgnoreCase)) || list.Any((DbThread item) => !string.Equals(TextHelpers.CanonicalPath(item.Cwd), TextHelpers.CanonicalPath(newProject), StringComparison.OrdinalIgnoreCase)))
 				{
 					throw new InvalidOperationException("copy-mode targeted index test failed");
 				}
@@ -1160,11 +1136,11 @@ internal static class Program
 				Environment.SetEnvironmentVariable("CODEX_HOME", text);
 			}
 			string originalSessionContents = File.ReadAllText(text3, Encoding.UTF8);
-			string trashDeleteCctBackup = text3 + ".cct-bak-1001";
-			File.Copy(text3, trashDeleteCctBackup);
+			string trashDeleteLegacySnapshot = text3 + ".cct-bak-1001";
+			File.Copy(text3, trashDeleteLegacySnapshot);
 			WinSqliteMaintenance.AddDesktopCatalogTestThread(text, testThreadId, "功能测试（已更新）", newProject);
 			DeletedSessionResult deletedSessionResult = ConversationStorage.MoveToTrash(session, newProject);
-			if (File.Exists(text3) || File.Exists(trashDeleteCctBackup) || !File.Exists(deletedSessionResult.BackupPath) || !File.Exists(deletedSessionResult.BackupPath + ".delete-info.json"))
+			if (File.Exists(text3) || File.Exists(trashDeleteLegacySnapshot) || !File.Exists(deletedSessionResult.BackupPath) || !File.Exists(deletedSessionResult.BackupPath + ".delete-info.json"))
 			{
 				throw new InvalidOperationException("safe delete test failed");
 			}
@@ -1178,8 +1154,7 @@ internal static class Program
 			{
 				throw new InvalidOperationException("trash project metadata test failed");
 			}
-			CctResult cctResult7 = CctRunner.Run(cct, new string[3] { "list", "--json", "--include-archived" }, null);
-			if (cctResult7.ExitCode != 0 || CctRunner.ParseSessions(cctResult7.StdOut).Count != 1)
+			if (NativeSessionCatalog.Scan(text).Count != 1)
 			{
 				throw new InvalidOperationException("deleting the original conversation affected its independent copy");
 			}
@@ -1201,20 +1176,20 @@ internal static class Program
 				throw new InvalidOperationException("second trash delete left the thread index visible");
 			}
 			AssertDesktopThreadAbsentForTest(Path.Combine(text, ".codex-global-state.json"), testThreadId);
-			string trashPurgeCctBackup = text3 + ".cct-bak-1002";
-			File.Copy(deletedSessionResult2.BackupPath, trashPurgeCctBackup);
+			string trashPurgeLegacySnapshot = text3 + ".cct-bak-1002";
+			File.Copy(deletedSessionResult2.BackupPath, trashPurgeLegacySnapshot);
 			ConversationStorage.DeleteFromTrash(trashSessionInfo2);
-			if (File.Exists(trashPurgeCctBackup) || File.Exists(deletedSessionResult2.BackupPath) || File.Exists(deletedSessionResult2.BackupPath + ".delete-info.json"))
+			if (File.Exists(trashPurgeLegacySnapshot) || File.Exists(deletedSessionResult2.BackupPath) || File.Exists(deletedSessionResult2.BackupPath + ".delete-info.json"))
 			{
 				throw new InvalidOperationException("trash permanent purge test failed");
 			}
 			File.WriteAllText(text3, originalSessionContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 			TargetedThreadIndexer.IndexSessionFile(text, text3, "功能测试", "真正的问题");
 			WinSqliteMaintenance.AddDesktopCatalogTestThread(text, testThreadId, "功能测试", newProject);
-			string permanentDeleteCctBackup = text3 + ".cct-bak-1003";
-			File.Copy(text3, permanentDeleteCctBackup);
+			string permanentDeleteLegacySnapshot = text3 + ".cct-bak-1003";
+			File.Copy(text3, permanentDeleteLegacySnapshot);
 			DeletedSessionResult deletedSessionResult3 = ConversationStorage.DeletePermanently(session);
-			if (File.Exists(text3) || File.Exists(permanentDeleteCctBackup) || !deletedSessionResult3.PermanentlyDeleted || !string.IsNullOrEmpty(deletedSessionResult3.BackupPath) || WinSqliteReader.ReadThreads(databasePath).Any((DbThread item) => string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)) || WinSqliteMaintenance.CountDesktopCatalogThreads(text, new string[1] { testThreadId }) != 0)
+			if (File.Exists(text3) || File.Exists(permanentDeleteLegacySnapshot) || !deletedSessionResult3.PermanentlyDeleted || !string.IsNullOrEmpty(deletedSessionResult3.BackupPath) || WinSqliteReader.ReadThreads(databasePath).Any((DbThread item) => string.Equals(item.Id, testThreadId, StringComparison.OrdinalIgnoreCase)) || WinSqliteMaintenance.CountDesktopCatalogThreads(text, new string[1] { testThreadId }) != 0)
 			{
 				throw new InvalidOperationException("direct permanent delete test failed");
 			}
@@ -1453,20 +1428,20 @@ internal static class Program
 			string legacyBackupTwo = legacyActive + ".cct-bak-2002";
 			File.WriteAllText(legacyBackupOne, legacyContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 			File.WriteAllText(legacyBackupTwo, legacyContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-			LegacyCctBackupMigrationResult legacyMigration = CctBackupMaintenance.MoveLegacyBackupsToTrash(text);
+			OrphanedSnapshotCleanupResult legacyMigration = ImportSnapshotMaintenance.MoveOrphanedSnapshotsToTrash(text);
 			if (legacyMigration.MovedToTrashCount != 1 || legacyMigration.RedundantDeletedCount != 1 || File.Exists(legacyBackupOne) || File.Exists(legacyBackupTwo))
 			{
-				throw new InvalidOperationException("legacy cct backup migration test failed");
+				throw new InvalidOperationException("legacy transaction snapshot migration test failed");
 			}
 			TrashSessionInfo legacyTrash = ConversationStorage.ReadTrash().Single((TrashSessionInfo item) => string.Equals(item.ThreadId, legacyThreadId, StringComparison.OrdinalIgnoreCase));
 			if (legacyTrash.DisplayTitle.IndexOf("旧版安全快照", StringComparison.Ordinal) < 0 || !File.Exists(legacyTrash.BackupPath))
 			{
-				throw new InvalidOperationException("legacy cct backup was not visible in trash");
+				throw new InvalidOperationException("legacy transaction snapshot was not visible in trash");
 			}
 			ConversationStorage.DeleteFromTrash(legacyTrash);
 			if (File.Exists(legacyTrash.BackupPath) || File.Exists(legacyTrash.SidecarPath))
 			{
-				throw new InvalidOperationException("legacy cct trash purge test failed");
+				throw new InvalidOperationException("legacy transaction snapshot trash purge test failed");
 			}
 
 			bool projectGuardWorked = false;
@@ -1481,6 +1456,24 @@ internal static class Program
 			if (!projectGuardWorked)
 			{
 				throw new InvalidOperationException("Codex home project deletion guard test failed");
+			}
+			string userProfilePath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+			string userProfileParent = string.IsNullOrWhiteSpace(userProfilePath) ? string.Empty : Directory.GetParent(userProfilePath)?.FullName;
+			if (!string.IsNullOrWhiteSpace(userProfileParent) && Directory.Exists(userProfileParent))
+			{
+				bool protectedParentGuardWorked = false;
+				try
+				{
+					ConversationStorage.ValidateProjectPath(userProfileParent);
+				}
+				catch (InvalidOperationException)
+				{
+					protectedParentGuardWorked = true;
+				}
+				if (!protectedParentGuardWorked)
+				{
+					throw new InvalidOperationException("protected user-directory parent deletion guard test failed");
+				}
 			}
 			Directory.CreateDirectory(projectDeleteTest);
 			File.WriteAllText(Path.Combine(projectDeleteTest, "keep-until-confirmed.txt"), "test", Encoding.UTF8);
@@ -1702,13 +1695,13 @@ internal static class Program
 			{
 				UiLanguage.Initialize(originalLanguageCode);
 			}
-			return "ImportModes=origin-merge+independent-copy · SamePathMap=skipped · FormalBackup=.codexchat+.codexproject+legacy · CctBak=rollback+commit+delete+legacy-trash · Lineage=origin-persist+project-scope+parent-child+fresh-every-time+ambiguity-guard · IndependentCopy=retained+delete-isolated · TargetedIndex=insert+update+two-project-cwd+native-path+visibility · HistoryMode=legacy+paginated+bidirectional-update+ordinal-gap-guard · ImportRollback=planned-new-files-only+unrelated-preserved+sqlite-compensation+commit-cleanup-failure-safe · RuntimeSelection=cli-version-probe+desktop-install-discovery · DesktopProjectState=existing-remap+create+multi-project+backup+verify · BackupPrewrite=OK · BackfillUnchanged=complete · PendingRunningGuard=OK · ZstdPreflight=OK · Preview=2 messages · Trash=copy+official-delete+index-remove+desktop-catalog-remove+list+index-restore+purge+descendant-staging · PermanentDelete=official-delete+index-remove+desktop-catalog-remove+descendant-cascade · OfficialDeleteRefusal=preserves-local-data · StaleSidebar=current+log-confirmed-legacy+official-repair+ledger+live-descendant-guard+orphan-subagent-visible+exact-location+desktop-catalog-remove+desktop-cache-invalidation+completed-repair-catchup · ProjectGuard+Permanent=OK · ProjectPayload=schema5+two-targets+target-guard+combined-pack+create+inspect+restore+skip+backup+traversal-guard · EnglishCriticalFlows=no-CJK · ResizeGrips=8";
+			return "ImportModes=origin-merge+independent-copy · SamePathCwd=no-op · FormalBackup=.codexchat+.codexproject+legacy · NativeTxn=rollback+commit+delete · LegacyTxnSnapshot=trash-compatibility · Lineage=origin-persist+project-scope+parent-child+fresh-every-time+ambiguity-guard+checksum-guard+outer-archive-guards · IndependentCopy=retained+delete-isolated · TargetedIndex=insert+update+two-project-cwd+native-path+visibility · HistoryMode=legacy+paginated+bidirectional-update+ordinal-gap-guard · ImportRollback=planned-new-files-only+unrelated-preserved+sqlite-compensation+commit-cleanup-failure-safe · RuntimeSelection=cli-version-probe+desktop-install-discovery · DesktopProjectState=existing-remap+create+multi-project+backup+verify · BackupPrewrite=OK · BackfillUnchanged=complete · PendingRunningGuard=OK · ZstdPreflight=OK · Preview=2 messages · Trash=copy+official-delete+index-remove+desktop-catalog-remove+list+index-restore+purge+descendant-staging · PermanentDelete=official-delete+index-remove+desktop-catalog-remove+descendant-cascade · OfficialDeleteRefusal=preserves-local-data · StaleSidebar=current+log-confirmed-legacy+official-repair+ledger+live-descendant-guard+orphan-subagent-visible+exact-location+desktop-catalog-remove+desktop-cache-invalidation+completed-repair-catchup · ProjectGuard+Permanent=OK · ProjectPayload=schema5+two-targets+target-guard+combined-pack+create+inspect+restore+skip+backup+traversal-guard · EnglishCriticalFlows=no-CJK · ResizeGrips=8";
 		}
 		finally
 		{
 			CodexAppServerThreadDeletion.TestOverride = null;
 			CodexAppServerThreadDeletion.VersionOutputOverrideForTest = null;
-			CctBackupTransaction.CommitCleanupFailureForTest = null;
+			NativeImportTransaction.CommitCleanupFailureForTest = null;
 			CodexDesktopProjectRegistry.TestOverride = null;
 			ConversationIndexMaintenance.LogRootOverride = null;
 			CodexDesktopTaskCache.UserDataRootOverride = null;
@@ -1782,14 +1775,14 @@ internal static class Program
 			{ "thread-writable-roots", writableRoots },
 			{ "electron-persisted-atom-state", atoms }
 		};
-		string json = CctRunner.NewSerializer().Serialize(state);
+		string json = JsonSerialization.NewSerializer().Serialize(state);
 		File.WriteAllText(Path.Combine(codexHome, ".codex-global-state.json"), json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 		return json;
 	}
 
 	private static void AssertDesktopAssignmentForTest(string statePath, string threadId, string expectedCwd, string expectedProjectId, string forbiddenCwd)
 	{
-		Dictionary<string, object> state = CctRunner.NewSerializer().DeserializeObject(File.ReadAllText(statePath, Encoding.UTF8)) as Dictionary<string, object>;
+		Dictionary<string, object> state = JsonSerialization.NewSerializer().DeserializeObject(File.ReadAllText(statePath, Encoding.UTF8)) as Dictionary<string, object>;
 		Dictionary<string, object> projects = state?["local-projects"] as Dictionary<string, object>;
 		Dictionary<string, object> assignments = state?["thread-project-assignments"] as Dictionary<string, object>;
 		Dictionary<string, object> writableRoots = state?["thread-writable-roots"] as Dictionary<string, object>;
@@ -1834,14 +1827,10 @@ internal static class Program
 	}
 
 
-	private static int RunSelfTest(string cct, string report)
+	private static int RunSelfTest(string report)
 	{
 		try
 		{
-			if (string.IsNullOrWhiteSpace(cct))
-			{
-				throw new FileNotFoundException("cct.exe not found");
-			}
 			string text = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CodexConversationMigrator.xaml");
 			if (!File.Exists(text))
 			{
@@ -1854,14 +1843,15 @@ internal static class Program
 				{
 					throw new InvalidDataException("XAML root is not Window");
 				}
-				string[] array = new string[56]
+				string[] array = new string[]
 				{
 					"MergeModeRadio", "CopyModeRadio", "ImportModeHelpText", "ConversationOverlay", "ConversationList", "ConversationCloseButton", "ConversationCanvas", "ConversationDialogHost", "ConversationResizeTop",
 					"ConversationResizeBottom", "ConversationResizeLeft", "ConversationResizeRight", "ConversationResizeTopLeft", "ConversationResizeTopRight", "ConversationResizeBottomLeft", "ConversationResizeBottomRight", "TrashButton", "BackupProjectFilesButton", "ProjectRestorePanel",
 					"RestoreProjectFilesCheck", "ProjectConflictCombo", "BackupFolderBox", "BrowseBackupFolderButton", "SelectAllProjectsButton", "ClearProjectsButton", "TargetPathLabel", "TargetPathHelpText", "MaximizeGlyph", "RestoreGlyph",
 					"ProjectBackupModeRadio", "ConversationBackupModeRadio", "BackupModeHelpText", "ProjectSelectionTools", "SessionSelectionTools", "ToggleSessionSelectionButton", "DeleteSelectedSessionsButton", "ProjectPaneTitle", "ProjectPaneSubtitle", "SessionModeHint", "SelectionHelpText", "ConversationMaximizeGlyph",
 					"ConversationRestoreGlyph", "MainSessionsTabRadio", "SubagentSessionsTabRadio", "CopyProjectPathButton", "ProjectSizeText",
-					"BrowsePackageButton", "BrowseTargetButton", "ImportProgressPanel", "ImportStageText", "ImportStageDetailText", "ImportElapsedText", "ImportStageProgress", "ImportWorkflowGrid", "ImportActionBar", "LanguageButton"
+					"BrowsePackageButton", "BrowseTargetButton", "ImportProgressPanel", "ImportStageText", "ImportStageDetailText", "ImportElapsedText", "ImportStageProgress", "ImportWorkflowGrid", "ImportActionBar", "LanguageButton",
+					"ConversationNavigationHost", "ConversationNavigationScroller", "ConversationNavigationRail", "ConversationNavigationPreviewPopup", "ConversationNavigationPreviewTitle", "ConversationNavigationPreviewResponse"
 				};
 				string[] array2 = array;
 				foreach (string text2 in array2)
@@ -1881,15 +1871,9 @@ internal static class Program
 			{
 				throw new InvalidDataException("dialog theme did not apply to generated controls");
 			}
-			string text3 = RunFeatureSafetyTest(cct);
+			string text3 = RunFeatureSafetyTest();
 			string presentationDataTests = RunPresentationDataTest();
-			CctResult cctResult = CctRunner.Run(cct, new string[1] { "--version" }, null);
-			CctResult cctResult2 = CctRunner.Run(cct, new string[3] { "list", "--json", "--include-archived" }, null);
-			if (cctResult.ExitCode != 0 || cctResult2.ExitCode != 0)
-			{
-				throw new InvalidOperationException("cct command failed");
-			}
-			List<SessionInfo> list = CctRunner.ParseSessions(cctResult2.StdOut);
+			List<SessionInfo> list = NativeSessionCatalog.ScanDefault();
 			CatalogResult catalogResult = CodexCatalog.Build(list);
 			int linkedSubagents = list.Count((SessionInfo session) => session.IsSubagent && !string.IsNullOrWhiteSpace(session.ParentThreadId));
 			int sizedSessions = list.Count((SessionInfo session) => session.SizeBytes > 0L && !string.IsNullOrWhiteSpace(session.DisplayPath));
@@ -1904,7 +1888,7 @@ internal static class Program
 			ProjectGroup sampleProject = catalogResult.Projects.FirstOrDefault((ProjectGroup x) => x.Sessions.Count > 0);
 			SessionInfo sampleParent = list.FirstOrDefault((SessionInfo x) => !x.IsSubagent);
 			bool sampleParentGrouped = sampleParent != null && catalogResult.Projects.Any((ProjectGroup x) => x.Sessions.Contains(sampleParent));
-			string contents = "OK\r\n" + cctResult.StdOut.Trim() + "\r\nRawSessions=" + list.Count + "\r\nProjects=" + catalogResult.Projects.Count + "\r\nMain=" + catalogResult.MainCount + "\r\nSubagents=" + catalogResult.InternalCount + "\r\nLinkedSubagents=" + linkedSubagents + "\r\nSizedSessions=" + sizedSessions + "\r\nUsedCodexIndex=" + catalogResult.UsedCodexIndex + "\r\nFeatureTests=" + text3 + "\r\nPresentationDataTests=" + presentationDataTests + "\r\nSampleParentFound=" + (sampleParent != null) + "\r\nSampleParentGrouped=" + sampleParentGrouped + "\r\nSampleProjectMain=" + (sampleProject?.MainCount ?? 0) + "\r\nSampleProjectSubagents=" + (sampleProject?.InternalCount ?? 0);
+			string contents = "OK\r\nEngine=Native\r\nRawSessions=" + list.Count + "\r\nProjects=" + catalogResult.Projects.Count + "\r\nMain=" + catalogResult.MainCount + "\r\nSubagents=" + catalogResult.InternalCount + "\r\nLinkedSubagents=" + linkedSubagents + "\r\nSizedSessions=" + sizedSessions + "\r\nUsedCodexIndex=" + catalogResult.UsedCodexIndex + "\r\nFeatureTests=" + text3 + "\r\nPresentationDataTests=" + presentationDataTests + "\r\nSampleParentFound=" + (sampleParent != null) + "\r\nSampleParentGrouped=" + sampleParentGrouped + "\r\nSampleProjectMain=" + (sampleProject?.MainCount ?? 0) + "\r\nSampleProjectSubagents=" + (sampleProject?.InternalCount ?? 0);
 			if (!string.IsNullOrWhiteSpace(report))
 			{
 				File.WriteAllText(report, contents, Encoding.UTF8);
@@ -1975,112 +1959,4 @@ internal static class Program
 		}
 	}
 
-	private static int RunBundleTestLegacy(string cct, string threadId, string output)
-	{
-		try
-		{
-			if (string.IsNullOrWhiteSpace(cct))
-			{
-				throw new FileNotFoundException("cct.exe not found");
-			}
-			CctResult cctResult = CctRunner.Run(cct, new string[3] { "list", "--json", "--include-archived" }, null);
-			if (cctResult.ExitCode != 0)
-			{
-				throw new InvalidOperationException(CctRunner.FirstUseful(cctResult));
-			}
-			List<SessionInfo> cctSessions = CctRunner.ParseSessions(cctResult.StdOut);
-			CatalogResult catalogResult = CodexCatalog.Build(cctSessions);
-			SessionInfo sessionInfo = catalogResult.Projects.SelectMany((ProjectGroup x) => x.Sessions).FirstOrDefault((SessionInfo x) => string.Equals(x.ThreadId, threadId, StringComparison.OrdinalIgnoreCase));
-			if (sessionInfo == null)
-			{
-				throw new InvalidOperationException("thread not found: " + threadId);
-			}
-			ExactBundleWriter.CreateSingleSessionBundle(sessionInfo, output);
-			return 0;
-		}
-		catch
-		{
-			return 1;
-		}
-	}
-
-	private static int RunRenderTestLegacy(string cct, string output)
-	{
-		try
-		{
-			Application application = new Application();
-			application.ShutdownMode = ShutdownMode.OnMainWindowClose;
-			Application application2 = application;
-			MainWindowController controller = new MainWindowController(cct);
-			application2.MainWindow = controller.Window;
-			bool captured = false;
-			controller.Window.ContentRendered += async delegate
-			{
-				if (!captured)
-				{
-					captured = true;
-					await controller.InitialLoadTask;
-					if (!controller.SelectProjectForTest(string.Empty))
-					{
-						throw new InvalidOperationException("project selection did not update the detail pane");
-					}
-					await Task.Delay(350);
-					controller.Window.UpdateLayout();
-					if (!(controller.Window.Content is FrameworkElement visual))
-					{
-						throw new InvalidOperationException("window content unavailable");
-					}
-					int width = Math.Max(1, (int)Math.Ceiling(visual.ActualWidth));
-					int height = Math.Max(1, (int)Math.Ceiling(visual.ActualHeight));
-					RenderTargetBitmap bitmap = new RenderTargetBitmap(width, height, 96.0, 96.0, PixelFormats.Pbgra32);
-					bitmap.Render(visual);
-					PngBitmapEncoder encoder = new PngBitmapEncoder
-					{
-						Frames = { BitmapFrame.Create(bitmap) }
-					};
-					using (FileStream stream = new FileStream(output, FileMode.Create, FileAccess.Write, FileShare.None))
-					{
-						encoder.Save(stream);
-					}
-					controller.EndBusyForTest();
-					controller.Window.Close();
-				}
-			};
-			return application2.Run(controller.Window);
-		}
-		catch
-		{
-			return 1;
-		}
-	}
-
-	private static int RunChromeTestLegacy(string cct, string output)
-	{
-		try
-		{
-			Application application = new Application();
-			application.ShutdownMode = ShutdownMode.OnMainWindowClose;
-			Application application2 = application;
-			MainWindowController controller = new MainWindowController(cct);
-			application2.MainWindow = controller.Window;
-			bool tested = false;
-			controller.Window.ContentRendered += async delegate
-			{
-				if (!tested)
-				{
-					tested = true;
-					await controller.InitialLoadTask;
-					IntPtr handle = new WindowInteropHelper(controller.Window).Handle;
-					File.WriteAllText(output, ChromeVerifier.Verify(handle), Encoding.UTF8);
-					controller.EndBusyForTest();
-					controller.Window.Close();
-				}
-			};
-			return application2.Run(controller.Window);
-		}
-		catch
-		{
-			return 1;
-		}
-	}
 }

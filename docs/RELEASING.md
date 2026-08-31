@@ -4,13 +4,13 @@ This checklist is for maintainers preparing a public GitHub release. Run it from
 
 ## 1. Prepare the version
 
-`VERSION` is the authoritative version for packaging, CI, and generated assembly metadata. It must contain one stable semantic version such as `3.0.0`.
+`VERSION` is the authoritative version for packaging, CI, and generated assembly metadata. It must contain one stable semantic version such as `1.0.0`.
 
 For a new release:
 
 1. Update `VERSION`.
-2. Update the visible version label and Codex app-server client version when `Verify-Release.ps1` identifies them.
-3. Add `docs/RELEASE_NOTES_v<version>.md`.
+2. Update the visible version label when `scripts/Verify-Release.ps1` identifies it. The app-server client version is derived automatically from the built assembly.
+3. Add `docs/releases/v<version>.md`.
 4. Move completed entries from `[Unreleased]` into a dated version section in `CHANGELOG.md`.
 5. Update version-specific download names in both README files.
 
@@ -18,7 +18,7 @@ Run the source-level consistency check:
 
 ```powershell
 $version = (Get-Content .\VERSION -Raw).Trim()
-.\Verify-Release.ps1 -Version $version
+.\scripts\Verify-Release.ps1 -Version $version
 ```
 
 Do not continue until it passes.
@@ -28,21 +28,25 @@ Do not continue until it passes.
 The complete local release command is:
 
 ```powershell
-.\package.ps1
+.\scripts\package.ps1
 ```
 
 It performs the following work:
 
 - verifies source and documentation version consistency;
-- fetches and verifies pinned `cct.exe` only when missing;
+- restores the pinned NuGet dependencies, including `Microsoft.NETFramework.ReferenceAssemblies.net48`;
 - creates a Release build;
 - runs Chinese and English functional, window-chrome, and render tests in a temporary synthetic Codex home;
-- removes older versioned ZIPs from `release/`;
-- creates a deterministic ZIP with complete linked end-user documentation;
-- writes `release/SHA256SUMS.txt`;
-- verifies the ZIP file list, Markdown links, EXE version, hash, and absence of an absolute PDB path.
+- creates a deterministic candidate ZIP containing only the portable application, concise bilingual README files, version, and license;
+- creates the candidate SHA-256 checksum;
+- verifies the ZIP file list, Markdown links, EXE version, hash, and absence of an absolute PDB path;
+- atomically publishes and verifies the current ZIP plus `SHA256SUMS.txt`, then removes older local ZIP versions only after that pair is durable.
+
+Source packaging requires Windows, .NET SDK 8.x, and PowerShell 5.1 or newer. The pinned reference-assemblies package removes the need for a separately installed .NET Framework 4.8 Targeting Pack. The application uses its built-in native engine for inspection, backup, and import, so the build and release package must not download, invoke, or contain a separate conversation-transfer executable.
 
 Review `artifacts/test/`; every self-test and chrome report must pass, every expected PNG must be present, and no `*.error.txt` file may exist.
+
+Before the first public release, enable **Private vulnerability reporting** under the repository's GitHub security settings so `.github/SECURITY.md` points to a working private channel.
 
 ## 3. Inspect the release assets
 
@@ -51,6 +55,17 @@ Confirm that `release/` contains exactly:
 - `CodexConversationMigrator-Windows-v<version>.zip`
 - `SHA256SUMS.txt`
 - the tracked `.gitkeep`
+
+After extraction, the ZIP itself must contain exactly:
+
+- `CodexConversationMigrator.exe`
+- `CodexConversationMigrator.exe.config`
+- `CodexConversationMigrator.xaml`
+- `Start.cmd`
+- `VERSION`
+- `README.md`
+- `README.zh-CN.md`
+- `LICENSE`
 
 Verify the checksum independently:
 
@@ -96,7 +111,7 @@ git push origin main
 git push origin "v$version"
 ```
 
-The tag workflow rejects a tag that does not exactly match `VERSION`, rebuilds and retests from the tagged commit, and uses `docs/RELEASE_NOTES_v<version>.md` as the GitHub Release body.
+The tag workflow rejects a tag that does not exactly match `VERSION`, rebuilds and retests from the tagged commit, and uses `docs/releases/v<version>.md` as the GitHub Release body.
 
 After the workflow finishes, verify:
 

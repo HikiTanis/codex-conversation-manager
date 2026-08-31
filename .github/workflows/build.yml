@@ -30,15 +30,11 @@ jobs:
           $version = [IO.File]::ReadAllText('VERSION').Trim()
           if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid VERSION: $version" }
           [IO.File]::AppendAllText($env:GITHUB_OUTPUT, "version=$version$([Environment]::NewLine)", [Text.UTF8Encoding]::new($false))
-          .\Verify-Release.ps1 -Version $version
-
-      - name: Fetch verified cct dependency
-        shell: powershell
-        run: .\Get-Cct.ps1
+          .\scripts\Verify-Release.ps1 -Version $version
 
       - name: Build, test, and package
         shell: powershell
-        run: .\package.ps1 -Version '${{ steps.version.outputs.version }}'
+        run: .\scripts\package.ps1 -Version '${{ steps.version.outputs.version }}'
 
       - name: Upload test reports
         if: always()

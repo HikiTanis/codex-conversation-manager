@@ -7,7 +7,7 @@ using System.Text.RegularExpressions;
 
 namespace CodexConversationMigrator;
 
-internal sealed class CctBackupRollbackResult
+internal sealed class ImportTransactionRollbackResult
 {
 	public int RestoredCount { get; set; }
 
@@ -16,14 +16,14 @@ internal sealed class CctBackupRollbackResult
 	public int RemovedImportedCount { get; set; }
 }
 
-internal sealed class LegacyCctBackupMigrationResult
+internal sealed class OrphanedSnapshotCleanupResult
 {
 	public int MovedToTrashCount { get; set; }
 
 	public int RedundantDeletedCount { get; set; }
 }
 
-internal sealed class CctBackupTransaction
+internal sealed class NativeImportTransaction
 {
 	internal static Func<string, bool> CommitCleanupFailureForTest { get; set; }
 
@@ -37,16 +37,16 @@ internal sealed class CctBackupTransaction
 
 	private bool completed;
 
-	private CctBackupTransaction(string codexHome)
+	private NativeImportTransaction(string codexHome)
 	{
 		this.codexHome = Path.GetFullPath(codexHome);
-		baseline = CctBackupMaintenance.Snapshot(this.codexHome);
+		baseline = ImportSnapshotMaintenance.Snapshot(this.codexHome);
 		baselineSessionFiles = TargetedThreadIndexer.SnapshotSessionFiles(this.codexHome);
 	}
 
-	public static CctBackupTransaction Begin(string codexHome)
+	public static NativeImportTransaction Begin(string codexHome)
 	{
-		return new CctBackupTransaction(codexHome);
+		return new NativeImportTransaction(codexHome);
 	}
 
 	public void TrackImportedSessionFiles(IEnumerable<string> candidates, IEnumerable<string> plannedThreadIds)
@@ -90,14 +90,14 @@ internal sealed class CctBackupTransaction
 		{
 			return 0;
 		}
-		List<string> created = CctBackupMaintenance.CreatedSince(codexHome, baseline);
+		List<string> created = ImportSnapshotMaintenance.CreatedSince(codexHome, baseline);
 		if (created.Count == 0)
 		{
 			completed = true;
 			return 0;
 		}
 
-		string cleanupRoot = CctBackupMaintenance.TransactionCleanupRoot(codexHome);
+		string cleanupRoot = ImportSnapshotMaintenance.TransactionCleanupRoot(codexHome);
 		string stagingDirectory = Path.Combine(cleanupRoot, Guid.NewGuid().ToString("N"));
 		List<KeyValuePair<string, string>> staged = new List<KeyValuePair<string, string>>();
 		Directory.CreateDirectory(stagingDirectory);
@@ -142,25 +142,24 @@ internal sealed class CctBackupTransaction
 				// The staged snapshot is intentionally left outside sessions for later manual cleanup.
 			}
 		}
-		CctBackupMaintenance.DeleteEmptyTransactionCleanupDirectories(stagingDirectory);
+		ImportSnapshotMaintenance.DeleteEmptyTransactionCleanupDirectories(stagingDirectory);
 		return staged.Count;
 	}
 
-	public CctBackupRollbackResult RollbackAndDeleteTemporaryBackups()
+	public ImportTransactionRollbackResult RollbackAndDeleteTemporaryBackups()
 	{
-		CctBackupRollbackResult result = new CctBackupRollbackResult();
+		ImportTransactionRollbackResult result = new ImportTransactionRollbackResult();
 		if (completed)
 		{
 			return result;
 		}
-		List<IGrouping<string, string>> groups = CctBackupMaintenance.CreatedSince(codexHome, baseline)
-			.GroupBy(CctBackupMaintenance.ActivePathForBackup, StringComparer.OrdinalIgnoreCase)
+		List<IGrouping<string, string>> groups = ImportSnapshotMaintenance.CreatedSince(codexHome, baseline)
+			.GroupBy(ImportSnapshotMaintenance.ActivePathForBackup, StringComparer.OrdinalIgnoreCase)
 			.ToList();
 		foreach (IGrouping<string, string> group in groups)
 		{
-			string original = group.OrderBy(CctBackupMaintenance.BackupOrdinal).First();
-			Directory.CreateDirectory(Path.GetDirectoryName(group.Key));
-			File.Copy(original, group.Key, overwrite: true);
+			string original = group.OrderBy(ImportSnapshotMaintenance.BackupOrdinal).First();
+			ImportSnapshotMaintenance.RestoreSnapshotAtomically(original, group.Key);
 			result.RestoredCount++;
 			foreach (string backup in group)
 			{
@@ -184,9 +183,11 @@ internal sealed class CctBackupTransaction
 	}
 }
 
-internal static class CctBackupMaintenance
+internal static class ImportSnapshotMaintenance
 {
-	private const string Marker = ".cct-bak-";
+	private const string CurrentMarker = ".ccm-txn-bak-";
+
+	private const string LegacyMarker = ".cct-bak-";
 
 	private const string TransactionCleanupDirectoryName = ".conversation-migrator-transaction-cleanup";
 
@@ -194,12 +195,12 @@ internal static class CctBackupMaintenance
 
 	public static HashSet<string> Snapshot(string codexHome)
 	{
-		return new HashSet<string>(Enumerate(codexHome), StringComparer.OrdinalIgnoreCase);
+		return new HashSet<string>(EnumerateCurrent(codexHome), StringComparer.OrdinalIgnoreCase);
 	}
 
 	public static List<string> CreatedSince(string codexHome, HashSet<string> baseline)
 	{
-		return Enumerate(codexHome).Where(path => baseline == null || !baseline.Contains(path)).ToList();
+		return EnumerateCurrent(codexHome).Where(path => baseline == null || !baseline.Contains(path)).ToList();
 	}
 
 	internal static string TransactionCleanupRoot(string codexHome)
@@ -229,19 +230,21 @@ internal static class CctBackupMaintenance
 
 	public static string ActivePathForBackup(string backupPath)
 	{
-		int marker = backupPath.LastIndexOf(Marker, StringComparison.OrdinalIgnoreCase);
+		string markerText;
+		int marker = FindMarker(backupPath, out markerText);
 		if (marker <= 0)
 		{
-			throw new InvalidDataException("无法识别 cct 临时备份路径：" + backupPath);
+			throw new InvalidDataException("无法识别导入事务临时快照路径：" + backupPath);
 		}
 		return backupPath.Substring(0, marker);
 	}
 
 	public static long BackupOrdinal(string backupPath)
 	{
-		int marker = backupPath.LastIndexOf(Marker, StringComparison.OrdinalIgnoreCase);
+		string markerText;
+		int marker = FindMarker(backupPath, out markerText);
 		long value;
-		return marker >= 0 && long.TryParse(backupPath.Substring(marker + Marker.Length), out value) ? value : long.MaxValue;
+		return marker >= 0 && long.TryParse(backupPath.Substring(marker + markerText.Length), out value) ? value : long.MaxValue;
 	}
 
 	public static int DeleteForSession(SessionInfo session)
@@ -256,7 +259,7 @@ internal static class CctBackupMaintenance
 	public static int DeleteForThread(string codexHome, string threadId, string activePath)
 	{
 		string fullActive = string.IsNullOrWhiteSpace(activePath) ? string.Empty : Path.GetFullPath(TextHelpers.StripExtendedPrefix(activePath));
-		List<string> matches = Enumerate(codexHome).Where(delegate(string path)
+		List<string> matches = EnumerateAll(codexHome).Where(delegate(string path)
 		{
 			if (!string.IsNullOrWhiteSpace(fullActive) && string.Equals(ActivePathForBackup(path), fullActive, StringComparison.OrdinalIgnoreCase))
 			{
@@ -271,10 +274,10 @@ internal static class CctBackupMaintenance
 		return matches.Count;
 	}
 
-	public static LegacyCctBackupMigrationResult MoveLegacyBackupsToTrash(string codexHome)
+	public static OrphanedSnapshotCleanupResult MoveOrphanedSnapshotsToTrash(string codexHome)
 	{
-		LegacyCctBackupMigrationResult result = new LegacyCctBackupMigrationResult();
-		List<IGrouping<string, string>> groups = Enumerate(codexHome)
+		OrphanedSnapshotCleanupResult result = new OrphanedSnapshotCleanupResult();
+		List<IGrouping<string, string>> groups = EnumerateAll(codexHome)
 			.GroupBy(ActivePathForBackup, StringComparer.OrdinalIgnoreCase)
 			.ToList();
 		foreach (IGrouping<string, string> group in groups)
@@ -298,7 +301,23 @@ internal static class CctBackupMaintenance
 		return result;
 	}
 
-	private static List<string> Enumerate(string codexHome)
+	private static List<string> EnumerateCurrent(string codexHome)
+	{
+		return EnumeratePattern(codexHome, "*.ccm-txn-bak-*");
+	}
+
+	private static List<string> EnumerateLegacy(string codexHome)
+	{
+		return EnumeratePattern(codexHome, "*.cct-bak-*");
+	}
+
+	private static List<string> EnumerateAll(string codexHome)
+	{
+		return EnumerateCurrent(codexHome).Concat(EnumerateLegacy(codexHome))
+			.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+	}
+
+	private static List<string> EnumeratePattern(string codexHome, string pattern)
 	{
 		List<string> result = new List<string>();
 		if (string.IsNullOrWhiteSpace(codexHome))
@@ -312,17 +331,109 @@ internal static class CctBackupMaintenance
 			{
 				continue;
 			}
-			result.AddRange(Directory.EnumerateFiles(root, "*.cct-bak-*", SearchOption.AllDirectories).Select(Path.GetFullPath));
+			Stack<string> pending = new Stack<string>();
+			pending.Push(root);
+			while (pending.Count > 0)
+			{
+				string current = pending.Pop();
+				try
+				{
+					if ((new DirectoryInfo(current).Attributes & FileAttributes.ReparsePoint) != 0)
+					{
+						continue;
+					}
+					foreach (string file in Directory.EnumerateFiles(current, pattern, SearchOption.TopDirectoryOnly))
+					{
+						try
+						{
+							if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) == 0)
+							{
+								result.Add(Path.GetFullPath(file));
+							}
+						}
+						catch (IOException)
+						{
+						}
+						catch (UnauthorizedAccessException)
+						{
+						}
+					}
+					foreach (string directory in Directory.EnumerateDirectories(current, "*", SearchOption.TopDirectoryOnly))
+					{
+						try
+						{
+							if ((new DirectoryInfo(directory).Attributes & FileAttributes.ReparsePoint) == 0)
+							{
+								pending.Push(directory);
+							}
+						}
+						catch (IOException)
+						{
+						}
+						catch (UnauthorizedAccessException)
+						{
+						}
+					}
+				}
+				catch (IOException)
+				{
+				}
+				catch (UnauthorizedAccessException)
+				{
+				}
+			}
 		}
 		return result;
 	}
 
+	internal static void RestoreSnapshotAtomically(string snapshotPath, string activePath)
+	{
+		string destination = Path.GetFullPath(activePath);
+		string directory = Path.GetDirectoryName(destination);
+		Directory.CreateDirectory(directory);
+		string temporary = Path.Combine(directory, ".ccm-rollback-" + Guid.NewGuid().ToString("N") + ".tmp");
+		try
+		{
+			File.Copy(snapshotPath, temporary, overwrite: false);
+			if (File.Exists(destination))
+			{
+				File.Replace(temporary, destination, null, ignoreMetadataErrors: true);
+			}
+			else
+			{
+				File.Move(temporary, destination);
+			}
+		}
+		finally
+		{
+			if (File.Exists(temporary))
+			{
+				File.Delete(temporary);
+			}
+		}
+	}
+
+	private static int FindMarker(string path, out string markerText)
+	{
+		int current = (path ?? string.Empty).LastIndexOf(CurrentMarker, StringComparison.OrdinalIgnoreCase);
+		int legacy = (path ?? string.Empty).LastIndexOf(LegacyMarker, StringComparison.OrdinalIgnoreCase);
+		if (current >= legacy)
+		{
+			markerText = CurrentMarker;
+			return current;
+		}
+		markerText = LegacyMarker;
+		return legacy;
+	}
+
 	private static void MoveOneLegacyBackupToTrash(string sourcePath, string activePath)
 	{
+		bool legacySnapshot = sourcePath.IndexOf(LegacyMarker, StringComparison.OrdinalIgnoreCase) >= 0;
 		string trashRoot = ConversationStorage.TrashRoot;
 		string datedDirectory = Path.Combine(trashRoot, DateTime.Now.ToString("yyyy-MM-dd"));
 		Directory.CreateDirectory(datedDirectory);
-		string destination = UniquePath(datedDirectory, DateTime.Now.ToString("HHmmssfff") + "-legacy-snapshot-" + Path.GetFileName(activePath));
+		string snapshotLabel = legacySnapshot ? "legacy-snapshot-" : "import-snapshot-";
+		string destination = UniquePath(datedDirectory, DateTime.Now.ToString("HHmmssfff") + "-" + snapshotLabel + Path.GetFileName(activePath));
 		string sidecar = destination + ".delete-info.json";
 		File.Move(sourcePath, destination);
 		try
@@ -341,16 +452,17 @@ internal static class CctBackupMaintenance
 			{
 				{ "schema", 2 },
 				{ "thread_id", threadId ?? string.Empty },
-				{ "title", "旧版安全快照 · " + title },
+				{ "title", (legacySnapshot ? "旧版安全快照 · " : "未完成导入安全快照 · ") + title },
 				{ "original_path", activePath },
 				{ "backup_path", destination },
 				{ "project_path", cwd ?? string.Empty },
 				{ "size_bytes", new FileInfo(destination).Length },
 				{ "deleted_at", DateTimeOffset.Now.ToString("o") },
-				{ "legacy_cct_snapshot", true },
+				{ "legacy_cct_snapshot", legacySnapshot },
+				{ "native_transaction_snapshot", !legacySnapshot },
 				{ "snapshot_ordinal", BackupOrdinal(sourcePath).ToString() }
 			};
-			File.WriteAllText(sidecar, CctRunner.NewSerializer().Serialize(metadata), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			File.WriteAllText(sidecar, JsonSerialization.NewSerializer().Serialize(metadata), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 		}
 		catch
 		{

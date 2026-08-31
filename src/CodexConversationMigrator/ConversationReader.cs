@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Web.Script.Serialization;
@@ -11,12 +10,6 @@ namespace CodexConversationMigrator;
 
 internal static class ConversationReader
 {
-	private const int MaxMessages = 1200;
-
-	private const int MaxCharacters = 4000000;
-
-	private const int MaxSingleMessage = 80000;
-
 	public static ConversationReadResult Read(SessionInfo session)
 	{
 		if (session == null)
@@ -34,88 +27,33 @@ internal static class ConversationReader
 		ConversationReadResult conversationReadResult2 = conversationReadResult;
 		if (text.EndsWith(".zst", StringComparison.OrdinalIgnoreCase))
 		{
-			conversationReadResult2.Messages.Add(Notice(UiLanguage.T("该会话使用 zstd 压缩，当前版本可备份，但暂不支持预览或迁移导入该压缩会话。")));
+			conversationReadResult2.Messages.Add(Notice(UiLanguage.T("该会话使用 zstd 压缩，当前版本可读取索引信息，但暂不支持预览、备份或迁移导入。")));
 			return conversationReadResult2;
 		}
-		JavaScriptSerializer javaScriptSerializer = CctRunner.NewSerializer();
-		int num = 0;
+		JavaScriptSerializer javaScriptSerializer = JsonSerialization.NewSerializer();
 		using (FileStream stream = new FileStream(text, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
 		{
-			using StreamReader streamReader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, 8192);
-			string text2;
-			while ((text2 = streamReader.ReadLine()) != null)
+			foreach (Utf8LineRecord line in ReadUtf8Lines(stream))
 			{
-				if (conversationReadResult2.Messages.Count >= 1200 || num >= 4000000)
-				{
-					conversationReadResult2.Truncated = true;
-					break;
-				}
-				if (string.IsNullOrWhiteSpace(text2))
+				if (string.IsNullOrWhiteSpace(line.Text))
 				{
 					continue;
 				}
 				try
 				{
-					if (!(javaScriptSerializer.DeserializeObject(text2) is Dictionary<string, object> dictionary) || GetString(dictionary, "type") != "response_item")
+					bool isUser;
+					string displayTime;
+					string messageText;
+					if (!TryReadDisplayMessage(javaScriptSerializer, line.Text, out isUser, out displayTime, out messageText))
 					{
 						continue;
-					}
-					object value;
-					Dictionary<string, object> dictionary2 = (dictionary.TryGetValue("payload", out value) ? (value as Dictionary<string, object>) : null);
-					if (dictionary2 == null || GetString(dictionary2, "type") != "message")
-					{
-						continue;
-					}
-					string a = GetString(dictionary2, "role");
-					bool flag = string.Equals(a, "user", StringComparison.OrdinalIgnoreCase);
-					bool flag2 = string.Equals(a, "assistant", StringComparison.OrdinalIgnoreCase);
-					if (!flag && !flag2)
-					{
-						continue;
-					}
-					string value2 = ExtractText(dictionary2);
-					if (flag)
-					{
-						value2 = StripAmbientContext(value2);
-					}
-					value2 = NormalizeMessage(value2);
-					if (string.IsNullOrWhiteSpace(value2))
-					{
-						continue;
-					}
-					if (value2.Length > 80000)
-					{
-						value2 = value2.Substring(0, 80000) + "\n\n［该条消息过长，预览已截断］";
-						conversationReadResult2.Truncated = true;
-					}
-					if (num + value2.Length > 4000000)
-					{
-						int num2 = Math.Max(0, 4000000 - num);
-						if (num2 > 300)
-						{
-							conversationReadResult2.Messages.Add(new ConversationMessage
-							{
-								RoleLabel = (flag ? UiLanguage.T("你") : "Codex"),
-								Text = value2.Substring(0, Math.Min(value2.Length, num2)) + UiLanguage.T("\n\n［后续内容已截断］"),
-								DisplayTime = FormatTime(GetString(dictionary, "timestamp")),
-								IsUser = flag
-							});
-						}
-						conversationReadResult2.Truncated = true;
-						break;
 					}
 					ConversationMessage conversationMessage = new ConversationMessage();
-					conversationMessage.RoleLabel = (flag ? UiLanguage.T("你") : "Codex");
-					conversationMessage.Text = value2;
-					conversationMessage.DisplayTime = FormatTime(GetString(dictionary, "timestamp"));
-					conversationMessage.IsUser = flag;
-					ConversationMessage conversationMessage2 = conversationMessage;
-					ConversationMessage conversationMessage3 = conversationReadResult2.Messages.LastOrDefault();
-					if (conversationMessage3 == null || conversationMessage3.IsUser != conversationMessage2.IsUser || !(conversationMessage3.Text == conversationMessage2.Text))
-					{
-						conversationReadResult2.Messages.Add(conversationMessage2);
-						num += value2.Length;
-					}
+					conversationMessage.RoleLabel = (isUser ? UiLanguage.T("你") : "Codex");
+					conversationMessage.DisplayTime = displayTime;
+					conversationMessage.IsUser = isUser;
+					conversationMessage.SetDeferredText(text, line.Offset, line.ByteLength);
+					conversationReadResult2.Messages.Add(conversationMessage);
 				}
 				catch
 				{
@@ -126,11 +64,156 @@ internal static class ConversationReader
 		{
 			conversationReadResult2.Messages.Add(Notice(UiLanguage.T("没有在该文件中找到可显示的用户或 Codex 文本消息。")));
 		}
-		else if (conversationReadResult2.Truncated)
-		{
-			conversationReadResult2.Messages.Add(Notice(UiLanguage.T("这段对话很长，为保证界面流畅，预览只显示了前面的部分；原始会话没有被修改。")));
-		}
 		return conversationReadResult2;
+	}
+
+	internal static string ReadDeferredText(ConversationMessage message)
+	{
+		if (message == null || string.IsNullOrWhiteSpace(message.DeferredPath) || message.DeferredOffset < 0L || message.DeferredLength <= 0)
+		{
+			return string.Empty;
+		}
+		try
+		{
+			byte[] buffer = new byte[message.DeferredLength];
+			using (FileStream stream = new FileStream(message.DeferredPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+			{
+				stream.Seek(message.DeferredOffset, SeekOrigin.Begin);
+				int totalRead = 0;
+				while (totalRead < buffer.Length)
+				{
+					int read = stream.Read(buffer, totalRead, buffer.Length - totalRead);
+					if (read <= 0)
+					{
+						throw new EndOfStreamException();
+					}
+					totalRead += read;
+				}
+			}
+			JavaScriptSerializer serializer = JsonSerialization.NewSerializer();
+			bool isUser;
+			string displayTime;
+			string messageText;
+			if (TryReadDisplayMessage(serializer, DecodeUtf8Line(buffer, buffer.Length), out isUser, out displayTime, out messageText))
+			{
+				return messageText;
+			}
+		}
+		catch
+		{
+		}
+		return UiLanguage.IsEnglish ? "Message content is no longer available." : "消息正文已不可用。";
+	}
+
+	private static bool TryReadDisplayMessage(JavaScriptSerializer serializer, string line, out bool isUser, out string displayTime, out string messageText)
+	{
+		isUser = false;
+		displayTime = string.Empty;
+		messageText = string.Empty;
+		if (!(serializer.DeserializeObject(line) is Dictionary<string, object> item) || GetString(item, "type") != "response_item")
+		{
+			return false;
+		}
+		object value;
+		Dictionary<string, object> payload = item.TryGetValue("payload", out value) ? value as Dictionary<string, object> : null;
+		if (payload == null || GetString(payload, "type") != "message")
+		{
+			return false;
+		}
+		string role = GetString(payload, "role");
+		isUser = string.Equals(role, "user", StringComparison.OrdinalIgnoreCase);
+		if (!isUser && !string.Equals(role, "assistant", StringComparison.OrdinalIgnoreCase))
+		{
+			return false;
+		}
+		messageText = ExtractText(payload);
+		if (isUser)
+		{
+			messageText = StripAmbientContext(messageText);
+		}
+		messageText = NormalizeMessage(messageText);
+		if (string.IsNullOrWhiteSpace(messageText))
+		{
+			return false;
+		}
+		displayTime = FormatTime(GetString(item, "timestamp"));
+		return true;
+	}
+
+	private static IEnumerable<Utf8LineRecord> ReadUtf8Lines(FileStream stream)
+	{
+		byte[] readBuffer = new byte[65536];
+		using (MemoryStream lineBuffer = new MemoryStream())
+		{
+			long lineOffset = 0L;
+			int bytesRead;
+			while ((bytesRead = stream.Read(readBuffer, 0, readBuffer.Length)) > 0)
+			{
+				long blockOffset = stream.Position - bytesRead;
+				int segmentStart = 0;
+				for (int index = 0; index < bytesRead; index++)
+				{
+					if (readBuffer[index] != (byte)'\n')
+					{
+						continue;
+					}
+					int segmentLength = index - segmentStart;
+					if (segmentLength > 0)
+					{
+						lineBuffer.Write(readBuffer, segmentStart, segmentLength);
+					}
+					if (lineBuffer.Length > int.MaxValue)
+					{
+						throw new InvalidDataException("Conversation line is too large to preview.");
+					}
+					int lineLength = (int)lineBuffer.Length;
+					yield return new Utf8LineRecord(lineOffset, lineLength, DecodeUtf8Line(lineBuffer.GetBuffer(), lineLength));
+					lineBuffer.SetLength(0L);
+					lineBuffer.Position = 0L;
+					lineOffset = blockOffset + index + 1L;
+					segmentStart = index + 1;
+				}
+				if (segmentStart < bytesRead)
+				{
+					lineBuffer.Write(readBuffer, segmentStart, bytesRead - segmentStart);
+				}
+			}
+			if (lineBuffer.Length > 0L)
+			{
+				if (lineBuffer.Length > int.MaxValue)
+				{
+					throw new InvalidDataException("Conversation line is too large to preview.");
+				}
+				int lineLength = (int)lineBuffer.Length;
+				yield return new Utf8LineRecord(lineOffset, lineLength, DecodeUtf8Line(lineBuffer.GetBuffer(), lineLength));
+			}
+		}
+	}
+
+	private static string DecodeUtf8Line(byte[] buffer, int length)
+	{
+		string value = Encoding.UTF8.GetString(buffer, 0, length).TrimEnd('\r');
+		if (value.Length > 0 && value[0] == '\uFEFF')
+		{
+			value = value.Substring(1);
+		}
+		return value;
+	}
+
+	private sealed class Utf8LineRecord
+	{
+		public Utf8LineRecord(long offset, int byteLength, string text)
+		{
+			Offset = offset;
+			ByteLength = byteLength;
+			Text = text;
+		}
+
+		public long Offset { get; }
+
+		public int ByteLength { get; }
+
+		public string Text { get; }
 	}
 
 	public static string ReadTitleCandidate(string path)
@@ -139,7 +222,7 @@ internal static class ConversationReader
 		{
 			return string.Empty;
 		}
-		JavaScriptSerializer serializer = CctRunner.NewSerializer();
+		JavaScriptSerializer serializer = JsonSerialization.NewSerializer();
 		int lines = 0;
 		int characters = 0;
 		try

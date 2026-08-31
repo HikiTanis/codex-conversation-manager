@@ -82,6 +82,32 @@
             </Setter>
         </Style>
 
+        <Style x:Key="ConversationNavigationButton" TargetType="Button">
+            <Setter Property="Width" Value="36" />
+            <Setter Property="Height" Value="10" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="NavigationFocusSurface" Background="{TemplateBinding Background}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="NavigationFocusSurface" Property="Background" Value="#E3F1EB" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="TabButton" TargetType="Button">
             <Setter Property="Height" Value="44" />
             <Setter Property="MinWidth" Value="138" />
@@ -624,7 +650,7 @@
                         <Border Margin="10,1,0,0" Padding="8,3" CornerRadius="7" Background="#F0F1ED">
                             <TextBlock Text="对话与项目管理" Foreground="{StaticResource Muted}" FontSize="12" />
                         </Border>
-                        <TextBlock Text="v3.0.0" Foreground="{StaticResource Faint}" FontSize="11.5" Margin="9,2,0,0" VerticalAlignment="Center" />
+                        <TextBlock Text="v1.0.0" Foreground="{StaticResource Faint}" FontSize="11.5" Margin="9,2,0,0" VerticalAlignment="Center" />
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" shell:WindowChrome.IsHitTestVisibleInChrome="True">
                         <Button x:Name="LanguageButton" Style="{StaticResource LanguageButton}" Content="EN" ToolTip="切换为英文" Margin="0,0,8,0" />
@@ -691,10 +717,10 @@
                                 <TextBlock Text="1 · 选择备份内容" Foreground="{StaticResource Ink}" FontWeight="SemiBold" Margin="0,0,0,7" />
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                    <RadioButton x:Name="ProjectBackupModeRadio" GroupName="BackupMode" Style="{StaticResource ImportModeSegment}" Content="项目＋对话" IsChecked="True" Margin="0,0,5,0" ToolTip="生成 .codexproject：项目目录、空目录、全部主对话和子代理对话" />
-                                    <RadioButton x:Name="ConversationBackupModeRadio" Grid.Column="1" GroupName="BackupMode" Style="{StaticResource ImportModeSegment}" Content="仅对话" Margin="5,0,0,0" ToolTip="生成 .codexchat：跨项目挑选主对话，不包含项目目录" />
+                                    <RadioButton x:Name="ConversationBackupModeRadio" GroupName="BackupMode" Style="{StaticResource ImportModeSegment}" Content="仅对话" IsChecked="True" Margin="0,0,5,0" ToolTip="生成 .codexchat：跨项目挑选主对话，不包含项目目录" />
+                                    <RadioButton x:Name="ProjectBackupModeRadio" Grid.Column="1" GroupName="BackupMode" Style="{StaticResource ImportModeSegment}" Content="项目＋对话" Margin="5,0,0,0" ToolTip="生成 .codexproject：项目目录、空目录、全部主对话和子代理对话" />
                                 </Grid>
-                                <TextBlock x:Name="BackupModeHelpText" Text="项目＋对话备份：项目文件与全部关联对话放在同一个文件里。" Foreground="#5D8F7F" FontSize="11.5" Margin="1,6,0,0" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="BackupModeHelpText" Text="仅对话备份：可跨项目勾选主对话，不包含项目文件。" Foreground="#5D8F7F" FontSize="11.5" Margin="1,6,0,0" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                             <StackPanel Grid.Column="2">
                                 <TextBlock Text="2 · 选择保存位置" Foreground="{StaticResource Ink}" FontWeight="SemiBold" Margin="0,0,0,7" />
@@ -706,12 +732,9 @@
                                 <TextBlock Text="自动命名；同名时追加序号，不会覆盖旧备份。" Foreground="{StaticResource Faint}" FontSize="11.5" Margin="1,6,0,0" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                             <StackPanel Grid.Column="3" Orientation="Horizontal" Margin="14,24,0,0" VerticalAlignment="Top">
-                                <Button x:Name="BrowseCctButton" Style="{StaticResource TextButton}" Content="运行组件…" ToolTip="选择或重新定位 cct.exe；通常无需修改" />
-                                <Button x:Name="RefreshButton" Style="{StaticResource SecondaryButton}" Content="刷新/修复" Margin="4,0,0,0" MinWidth="84" ToolTip="重新读取本地项目和对话，并检测可安全修复的侧边栏残留" />
+								<Button x:Name="RefreshButton" Style="{StaticResource SecondaryButton}" Content="刷新/修复" MinWidth="84" ToolTip="重新读取本地项目和对话，并检测可安全修复的侧边栏残留" />
                                 <Button x:Name="TrashButton" Style="{StaticResource SecondaryButton}" Content="回收站" Margin="8,0,0,0" MinWidth="76" ToolTip="恢复或永久删除已移入回收站的会话，也可处理对应项目" />
                             </StackPanel>
-                            <TextBlock x:Name="CctStatusText" Visibility="Collapsed" Text="等待检测" />
-                            <TextBox x:Name="CctPathBox" Visibility="Collapsed" Width="0" Height="0" />
                         </Grid>
                     </Border>
 
@@ -731,10 +754,10 @@
                                 <Grid>
                                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                                     <StackPanel>
-                                        <TextBlock x:Name="ProjectPaneTitle" Text="勾选要迁移的项目" Foreground="{StaticResource Ink}" FontSize="17" FontWeight="SemiBold" />
-                                        <TextBlock x:Name="ProjectPaneSubtitle" Text="项目目录和全部对话会进入同一个包" Foreground="{StaticResource Faint}" FontSize="11.5" Margin="0,4,0,0" />
+                                        <TextBlock x:Name="ProjectPaneTitle" Text="选择对话所在项目" Foreground="{StaticResource Ink}" FontSize="17" FontWeight="SemiBold" />
+                                        <TextBlock x:Name="ProjectPaneSubtitle" Text="可跨项目勾选要备份的主对话" Foreground="{StaticResource Faint}" FontSize="11.5" Margin="0,4,0,0" />
                                     </StackPanel>
-                                    <StackPanel x:Name="ProjectSelectionTools" Grid.Row="1" Orientation="Horizontal" Margin="-8,7,0,0">
+                                    <StackPanel x:Name="ProjectSelectionTools" Grid.Row="1" Orientation="Horizontal" Margin="-8,7,0,0" Visibility="Collapsed">
                                         <Button x:Name="SelectAllProjectsButton" Style="{StaticResource TextButton}" Content="全选项目" Height="28" Padding="8,0" />
                                         <Button x:Name="ClearProjectsButton" Style="{StaticResource TextButton}" Content="清空" Height="28" Padding="8,0" />
                                     </StackPanel>
@@ -828,7 +851,7 @@
                                     </StackPanel>
                                     <StackPanel x:Name="SessionSelectionTools" Grid.Column="2" Orientation="Horizontal" Margin="10,0,0,0">
                                         <Button x:Name="ToggleSessionSelectionButton" Style="{StaticResource SecondaryButton}" Content="全选" Height="36" MinWidth="76" Padding="12,0" ToolTip="选择当前搜索结果中的全部对话；再次点击可全部取消" />
-                                        <Button x:Name="DeleteSelectedSessionsButton" Style="{StaticResource SecondaryButton}" Content="删除所选" Height="36" MinWidth="106" Padding="12,0" Margin="8,0,0,0" Foreground="#A9443F" BorderBrush="#E4C7C4" IsEnabled="False" ToolTip="删除当前显示结果中已勾选的对话；搜索隐藏项和项目目录保持不变" />
+                                        <Button x:Name="DeleteSelectedSessionsButton" Style="{StaticResource SecondaryButton}" Content="删除所选" Height="36" MinWidth="106" Padding="12,0" Margin="8,0,0,0" Foreground="#A9443F" BorderBrush="#E4C7C4" IsEnabled="False" ToolTip="删除已勾选的对话；选中项目全部主对话后可同时处理项目目录" />
                                     </StackPanel>
                                 </Grid>
 
@@ -895,12 +918,11 @@
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <StackPanel VerticalAlignment="Center">
-                                            <TextBlock x:Name="SelectedCountText" Text="已选 0 个项目＋对话" Foreground="{StaticResource Ink}" FontWeight="SemiBold" />
-                                            <TextBlock x:Name="SelectionHelpText" Text="生成 .codexproject：项目目录与全部关联对话一起备份" Foreground="{StaticResource Muted}" FontSize="11.5" Margin="0,5,0,0" />
-                                            <CheckBox x:Name="FullFidelityCheck" Visibility="Collapsed" IsChecked="True" />
+                                            <TextBlock x:Name="SelectedCountText" Text="已选 0 个主对话" Foreground="{StaticResource Ink}" FontWeight="SemiBold" />
+                                            <TextBlock x:Name="SelectionHelpText" Text="生成 .codexchat：只包含勾选的主对话，不包含项目文件" Foreground="{StaticResource Muted}" FontSize="11.5" Margin="0,5,0,0" />
                                         </StackPanel>
-                                        <Button x:Name="BackupSelectedButton" Grid.Column="2" Style="{StaticResource PrimaryButton}" Content="备份仅对话" MinWidth="148" Margin="10,0,0,0" Visibility="Collapsed" ToolTip="生成 .codexchat；可跨多个项目，不包含项目目录" />
-										<Button x:Name="BackupProjectFilesButton" Grid.Column="2" Style="{StaticResource PrimaryButton}" Content="备份项目＋对话" Margin="10,0,0,0" MinWidth="148" ToolTip="生成 .codexproject；完整项目目录与全部对话进入同一个文件" />
+                                        <Button x:Name="BackupSelectedButton" Grid.Column="2" Style="{StaticResource PrimaryButton}" Content="备份仅对话" MinWidth="148" Margin="10,0,0,0" ToolTip="生成 .codexchat；可跨多个项目，不包含项目目录" />
+										<Button x:Name="BackupProjectFilesButton" Grid.Column="2" Style="{StaticResource PrimaryButton}" Content="备份项目＋对话" Margin="10,0,0,0" MinWidth="148" Visibility="Collapsed" ToolTip="生成 .codexproject；完整项目目录与全部对话进入同一个文件" />
                                     </Grid>
                                 </Border>
                             </Grid>
@@ -1040,7 +1062,7 @@
 
             <Grid x:Name="ConversationOverlay" Grid.RowSpan="4" Panel.ZIndex="90" Background="#660F120F" Visibility="Collapsed">
                 <Canvas x:Name="ConversationCanvas" ClipToBounds="True">
-                    <Grid x:Name="ConversationDialogHost" Width="940" Height="650" MinWidth="620" MinHeight="400">
+                    <Grid x:Name="ConversationDialogHost" Width="1180" Height="720" MinWidth="620" MinHeight="400">
                 <Border x:Name="ConversationPanel" Background="#FFFEFC" BorderBrush="#DDE0D9" BorderThickness="1" CornerRadius="18">
                     <Border.Effect>
                         <DropShadowEffect Color="#28000000" BlurRadius="30" ShadowDepth="8" Opacity="0.42" />
@@ -1085,7 +1107,25 @@
                             </Grid>
                         </Border>
 
-                        <ListBox x:Name="ConversationList" Grid.Row="1" Margin="18,12" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                        <Grid Grid.Row="1" Margin="12,12,18,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border x:Name="ConversationNavigationHost" Width="38" MaxHeight="640" Margin="2,4,8,4" HorizontalAlignment="Left" VerticalAlignment="Center" Background="Transparent" Visibility="Collapsed" AutomationProperties.Name="用户消息导航">
+                                <ScrollViewer x:Name="ConversationNavigationScroller" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" CanContentScroll="False" PanningMode="VerticalOnly" Focusable="False">
+                                    <ScrollViewer.OpacityMask>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                            <GradientStop Color="#00FFFFFF" Offset="0" />
+                                            <GradientStop Color="#FFFFFFFF" Offset="0.025" />
+                                            <GradientStop Color="#FFFFFFFF" Offset="0.975" />
+                                            <GradientStop Color="#00FFFFFF" Offset="1" />
+                                        </LinearGradientBrush>
+                                    </ScrollViewer.OpacityMask>
+                                    <StackPanel x:Name="ConversationNavigationRail" Width="36" Background="Transparent" />
+                                </ScrollViewer>
+                            </Border>
+                            <ListBox x:Name="ConversationList" Grid.Column="1" Background="Transparent" BorderThickness="0" ScrollViewer.CanContentScroll="True" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Pixel">
                             <ListBox.ItemContainerStyle>
                                 <Style TargetType="ListBoxItem">
                                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -1099,13 +1139,13 @@
                             </ListBox.ItemContainerStyle>
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
-                                    <Border x:Name="MessageBubble" HorizontalAlignment="Left" MaxWidth="720" Background="#F5F6F2" BorderBrush="#E4E6E0" BorderThickness="1" CornerRadius="14" Padding="14,11">
+                                    <Border x:Name="MessageBubble" HorizontalAlignment="Left" MaxWidth="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType={x:Type ListBox}}}" Background="#F5F6F2" BorderBrush="#E4E6E0" BorderThickness="1" CornerRadius="14" Padding="14,11">
                                         <StackPanel>
                                             <Grid Margin="1,0,1,7">
                                                 <TextBlock x:Name="RoleLabel" Text="{Binding RoleLabel}" Foreground="#087657" FontSize="11.5" FontWeight="SemiBold" />
                                                 <TextBlock Text="{Binding DisplayTime}" HorizontalAlignment="Right" Foreground="{StaticResource Faint}" FontSize="10.5" Margin="46,0,0,0" />
                                             </Grid>
-                                            <TextBox Text="{Binding Text}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Background="Transparent" BorderThickness="0" Padding="0" Foreground="#343834" FontFamily="Segoe UI Variable Text, Microsoft YaHei UI" FontSize="13" IsTabStop="False" />
+                                            <TextBox Text="{Binding Text, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Disabled" Background="Transparent" BorderThickness="0" Padding="0" Foreground="#343834" FontFamily="Segoe UI Variable Text, Microsoft YaHei UI" FontSize="13" IsTabStop="False" />
                                         </StackPanel>
                                     </Border>
                                     <DataTemplate.Triggers>
@@ -1124,7 +1164,19 @@
                                     </DataTemplate.Triggers>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
-                        </ListBox>
+                            </ListBox>
+                            <Popup x:Name="ConversationNavigationPreviewPopup" AllowsTransparency="True" Placement="Right" PopupAnimation="Fade" StaysOpen="True" Focusable="False">
+                                <Border Width="320" MaxHeight="122" Margin="10,0,12,0" Padding="11,9" Background="#F9FAF7" BorderBrush="#DADDD6" BorderThickness="1" CornerRadius="12">
+                                    <Border.Effect>
+                                        <DropShadowEffect Color="#2B000000" BlurRadius="18" ShadowDepth="5" Opacity="0.42" />
+                                    </Border.Effect>
+                                    <StackPanel>
+                                        <TextBlock x:Name="ConversationNavigationPreviewTitle" Foreground="#252925" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock x:Name="ConversationNavigationPreviewResponse" Margin="0,5,0,0" Foreground="#697069" FontSize="11.5" LineHeight="17" TextWrapping="Wrap" MaxHeight="54" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </Border>
+                            </Popup>
+                        </Grid>
 
                         <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="20,0">
                             <Grid>

@@ -11,7 +11,7 @@ body:
     id: version
     attributes:
       label: App version
-      placeholder: 3.0.0
+      placeholder: Version shown in the app
     validations:
       required: true
   - type: input
@@ -29,7 +29,8 @@ body:
         - Backup
         - Import or restore
         - Conversation viewing
-        - Trash or deletion
+        - Project or path reassociation
+        - Trash, deletion, or sidebar repair
         - Language or UI
         - Build or packaging
     validations:

@@ -1,6 +1,6 @@
 namespace CodexConversationMigrator;
 
-internal sealed class CctBundleSession
+internal sealed class BundleSession
 {
 	public string thread_id { get; set; }
 

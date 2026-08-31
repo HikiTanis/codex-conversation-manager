@@ -5,7 +5,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Split-Path -Parent $scriptRoot
 $canonicalVersion = [IO.File]::ReadAllText((Join-Path $repoRoot 'VERSION')).Trim()
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $Version = $canonicalVersion
@@ -14,12 +15,14 @@ if (-not [string]::Equals($Version, $canonicalVersion, [StringComparison]::Ordin
     throw "Requested version $Version does not match VERSION $canonicalVersion."
 }
 
-& (Join-Path $repoRoot 'Verify-Release.ps1') -Version $Version
+& (Join-Path $scriptRoot 'Verify-Release.ps1') -Version $Version
 
 $releaseRoot = Join-Path $repoRoot 'release'
-$buildRoot = Join-Path $repoRoot 'src\bin\Release\net48'
+$buildRoot = Join-Path $repoRoot 'src\CodexConversationMigrator\bin\Release\net48'
 $zipPath = Join-Path $releaseRoot "CodexConversationMigrator-Windows-v$Version.zip"
 $stage = Join-Path $releaseRoot ('.stage-' + [Guid]::NewGuid().ToString('N'))
+$candidateRoot = Join-Path $releaseRoot ('.candidate-' + [Guid]::NewGuid().ToString('N'))
+$candidateZip = Join-Path $candidateRoot "CodexConversationMigrator-Windows-v$Version.zip"
 
 function New-DeterministicZip {
     param(
@@ -60,24 +63,16 @@ function New-DeterministicZip {
 
 try {
     New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
-    Get-ChildItem -LiteralPath $releaseRoot -Filter 'CodexConversationMigrator-Windows-v*.zip' -File |
-        Remove-Item -Force
-    $existingHashFile = Join-Path $releaseRoot 'SHA256SUMS.txt'
-    if (Test-Path -LiteralPath $existingHashFile) {
-        Remove-Item -LiteralPath $existingHashFile -Force
-    }
-
-    & (Join-Path $repoRoot 'build.ps1') -Configuration Release
+    & (Join-Path $scriptRoot 'build.ps1') -Configuration Release
     if (-not $SkipTests) {
-        & (Join-Path $repoRoot 'test.ps1') -NoBuild
+        & (Join-Path $scriptRoot 'test.ps1') -NoBuild
     }
 
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
     $files = @(
         'CodexConversationMigrator.exe',
         'CodexConversationMigrator.exe.config',
-        'CodexConversationMigrator.xaml',
-        'cct.exe'
+        'CodexConversationMigrator.xaml'
     )
     foreach ($file in $files) {
         $source = Join-Path $buildRoot $file
@@ -91,29 +86,62 @@ try {
     Copy-Item -LiteralPath (Join-Path $repoRoot 'VERSION') -Destination (Join-Path $stage 'VERSION')
     Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination (Join-Path $stage 'README.md')
     Copy-Item -LiteralPath (Join-Path $repoRoot 'README.zh-CN.md') -Destination (Join-Path $stage 'README.zh-CN.md')
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'CHANGELOG.md') -Destination (Join-Path $stage 'CHANGELOG.md')
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'PRIVACY.md') -Destination (Join-Path $stage 'PRIVACY.md')
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'SECURITY.md') -Destination (Join-Path $stage 'SECURITY.md')
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'SUPPORT.md') -Destination (Join-Path $stage 'SUPPORT.md')
     Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination (Join-Path $stage 'LICENSE')
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md') -Destination (Join-Path $stage 'THIRD_PARTY_NOTICES.md')
-    $stageDocs = Join-Path $stage 'docs'
-    New-Item -ItemType Directory -Path $stageDocs -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'docs\BACKUP_FORMATS.md') -Destination (Join-Path $stageDocs 'BACKUP_FORMATS.md')
-    Copy-Item -LiteralPath (Join-Path $repoRoot "docs\RELEASE_NOTES_v$Version.md") -Destination (Join-Path $stageDocs "RELEASE_NOTES_v$Version.md")
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'docs\RELEASING.md') -Destination (Join-Path $stageDocs 'RELEASING.md')
 
-    $stageThirdParty = Join-Path $stage 'third_party\cct'
-    New-Item -ItemType Directory -Path $stageThirdParty -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'third_party\cct\LICENSE') -Destination (Join-Path $stageThirdParty 'LICENSE')
+    New-Item -ItemType Directory -Path $candidateRoot -Force | Out-Null
+    New-DeterministicZip -SourceRoot $stage -DestinationPath $candidateZip
 
-    New-DeterministicZip -SourceRoot $stage -DestinationPath $zipPath
+    $zipHash = (Get-FileHash -LiteralPath $candidateZip -Algorithm SHA256).Hash
+    $candidateHashFile = Join-Path $candidateRoot 'SHA256SUMS.txt'
+    [IO.File]::WriteAllText($candidateHashFile, "$zipHash  $([IO.Path]::GetFileName($candidateZip))$([Environment]::NewLine)", [Text.UTF8Encoding]::new($false))
 
-    $zipHash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash
+    # Validate the complete candidate before replacing the last known-good local release.
+    & (Join-Path $scriptRoot 'Verify-Release.ps1') -Version $Version -PackagePath $candidateZip
+
     $hashFile = Join-Path $releaseRoot 'SHA256SUMS.txt'
-    [IO.File]::WriteAllText($hashFile, "$zipHash  $([IO.Path]::GetFileName($zipPath))$([Environment]::NewLine)", [Text.UTF8Encoding]::new($false))
+    $previousZip = Join-Path $releaseRoot ('.previous-package-' + [Guid]::NewGuid().ToString('N') + '.zip')
+    $previousHash = Join-Path $releaseRoot ('.previous-hash-' + [Guid]::NewGuid().ToString('N') + '.txt')
+    $hadCurrentZip = Test-Path -LiteralPath $zipPath
+    try {
+        if ($hadCurrentZip) {
+            [IO.File]::Replace($candidateZip, $zipPath, $previousZip, $true)
+        }
+        else {
+            Move-Item -LiteralPath $candidateZip -Destination $zipPath
+        }
+        try {
+            if (Test-Path -LiteralPath $hashFile) {
+                [IO.File]::Replace($candidateHashFile, $hashFile, $previousHash, $true)
+            }
+            else {
+                Move-Item -LiteralPath $candidateHashFile -Destination $hashFile
+            }
+        }
+        catch {
+            if ($hadCurrentZip -and (Test-Path -LiteralPath $previousZip)) {
+                [IO.File]::Replace($previousZip, $zipPath, $null, $true)
+            }
+            elseif (-not $hadCurrentZip -and (Test-Path -LiteralPath $zipPath)) {
+                Remove-Item -LiteralPath $zipPath -Force
+            }
+            throw
+        }
 
-    & (Join-Path $repoRoot 'Verify-Release.ps1') -Version $Version -PackagePath $zipPath
+        # The verified current ZIP and checksum are now durable. Older versions
+        # are removed only after that pair has been published successfully.
+        Get-ChildItem -LiteralPath $releaseRoot -Filter 'CodexConversationMigrator-Windows-v*.zip' -File |
+            Where-Object { -not [string]::Equals($_.FullName, $zipPath, [StringComparison]::OrdinalIgnoreCase) } |
+            Remove-Item -Force
+    }
+    finally {
+        foreach ($rollbackFile in @($previousZip, $previousHash)) {
+            if (Test-Path -LiteralPath $rollbackFile) {
+                Remove-Item -LiteralPath $rollbackFile -Force
+            }
+        }
+    }
+
+    & (Join-Path $scriptRoot 'Verify-Release.ps1') -Version $Version -PackagePath $zipPath
 
     Write-Host "Created $zipPath"
     Write-Host "SHA-256 $zipHash"
@@ -121,5 +149,8 @@ try {
 finally {
     if (Test-Path -LiteralPath $stage) {
         Remove-Item -LiteralPath $stage -Recurse -Force
+    }
+    if (Test-Path -LiteralPath $candidateRoot) {
+        Remove-Item -LiteralPath $candidateRoot -Recurse -Force
     }
 }

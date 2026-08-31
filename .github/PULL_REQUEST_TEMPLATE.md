@@ -11,6 +11,6 @@ Describe the user-visible change and why it is needed.
 
 ## Verification
 
-- [ ] `.\build.ps1`
-- [ ] `.\test.ps1 -NoBuild`
+- [ ] `.\scripts\build.ps1`
+- [ ] `.\scripts\test.ps1 -NoBuild`
 - [ ] Relevant manual flow checked with synthetic data
