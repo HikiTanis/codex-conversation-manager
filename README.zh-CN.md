@@ -2,7 +2,7 @@
 
 **Windows 上的 Codex 对话与项目管理、备份和迁移工具。**
 
-[English](README.md) · 当前版本：v1.0.1
+[English](README.md) · 当前版本：v1.0.2
 
 它在本机统一整理 Codex 项目、主对话和子代理对话，解决项目改名或移动后对话失联、会话占用不透明、跨电脑迁移困难，以及删除后侧边栏残留等问题。
 
@@ -39,11 +39,11 @@
 
 本软件是便携版，无需安装：
 
-1. 从 GitHub Releases 下载 `CodexConversationManager-Windows-v1.0.1.zip` 和 `SHA256SUMS.txt`。
+1. 从 GitHub Releases 下载 `CodexConversationManager-Windows-v1.0.2.zip` 和 `SHA256SUMS.txt`。
 2. 校验下载文件：
 
    ```powershell
-   $zip = '.\CodexConversationManager-Windows-v1.0.1.zip'
+   $zip = '.\CodexConversationManager-Windows-v1.0.2.zip'
    (Get-FileHash $zip -Algorithm SHA256).Hash
    Get-Content .\SHA256SUMS.txt
    ```
@@ -117,6 +117,6 @@
 
 脚本会还原固定依赖、编译、运行中英文功能与界面测试、验证候选包，并把 ZIP 和 `SHA256SUMS.txt` 写入 `release/`。`VERSION` 是发布版本的唯一来源。
 
-源码仓库还提供：`docs/releases/v1.0.1.md`（发布说明）、`CHANGELOG.md`（版本记录）、`docs/RELEASING.md`（发布流程）、`.github/SUPPORT.md`（问题反馈）和 `.github/CONTRIBUTING.md`（贡献指南）。
+源码仓库还提供：`docs/releases/v1.0.2.md`（发布说明）、`CHANGELOG.md`（版本记录）、`docs/RELEASING.md`（发布流程）、`.github/SUPPORT.md`（问题反馈）和 `.github/CONTRIBUTING.md`（贡献指南）。
 
 本项目使用 [MIT License](LICENSE)。

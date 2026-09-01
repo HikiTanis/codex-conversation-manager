@@ -59,6 +59,7 @@ if (-not (Test-Path -LiteralPath $releaseNotes)) {
     throw "Release notes are missing for VERSION $($Version): $releaseNotes"
 }
 Assert-FileContains $releaseNotes 'Codex CLI 0.148.0 or later' 'Release-note Codex CLI compatibility requirement'
+Assert-FileContains (Join-Path $repoRoot '.github\workflows\release.yml') 'gh release list' 'Non-failing GitHub release existence check'
 
 $projectFile = Join-Path $repoRoot 'src\CodexConversationManager\CodexConversationManager.csproj'
 Assert-FileContains $projectFile '..\..\VERSION' 'MSBuild VERSION source'

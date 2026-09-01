@@ -6,6 +6,13 @@ All notable changes are documented here. The project follows semantic versioning
 
 No unreleased changes are documented yet.
 
+## [1.0.2] - 2026-09-01
+
+### Fixed
+
+- Made the GitHub Release workflow detect an absent release without treating the expected lookup result as a fatal PowerShell error.
+- Made reruns safely edit an existing release and replace its assets, while first-time runs create the release normally.
+
 ## [1.0.1] - 2026-09-01
 
 ### Changed
