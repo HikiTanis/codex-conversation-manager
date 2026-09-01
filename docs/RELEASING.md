@@ -52,15 +52,15 @@ Before the first public release, enable **Private vulnerability reporting** unde
 
 Confirm that `release/` contains exactly:
 
-- `CodexConversationMigrator-Windows-v<version>.zip`
+- `CodexConversationManager-Windows-v<version>.zip`
 - `SHA256SUMS.txt`
 - the tracked `.gitkeep`
 
 After extraction, the ZIP itself must contain exactly:
 
-- `CodexConversationMigrator.exe`
-- `CodexConversationMigrator.exe.config`
-- `CodexConversationMigrator.xaml`
+- `CodexConversationManager.exe`
+- `CodexConversationManager.exe.config`
+- `CodexConversationManager.xaml`
 - `Start.cmd`
 - `VERSION`
 - `README.md`
@@ -71,7 +71,7 @@ Verify the checksum independently:
 
 ```powershell
 $version = (Get-Content .\VERSION -Raw).Trim()
-$zip = ".\release\CodexConversationMigrator-Windows-v$version.zip"
+$zip = ".\release\CodexConversationManager-Windows-v$version.zip"
 $expected = ((Get-Content .\release\SHA256SUMS.txt -Raw).Trim() -split '\s+')[0]
 $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
 if ($actual -ne $expected) { throw 'Release checksum mismatch.' }
@@ -96,7 +96,7 @@ Create an annotated tag only after the final commit exists:
 
 ```powershell
 $version = (Get-Content .\VERSION -Raw).Trim()
-git tag -a "v$version" -m "Codex Conversation Migrator v$version"
+git tag -a "v$version" -m "Codex Conversation Manager v$version"
 ```
 
 If an unpublished local tag already points to an older preparatory commit, remove and recreate it before any push. Never move or replace a tag that has already been published.

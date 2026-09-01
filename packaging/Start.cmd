@@ -1,2 +1,2 @@
 @echo off
-start "" "%~dp0CodexConversationMigrator.exe"
+start "" "%~dp0CodexConversationManager.exe"

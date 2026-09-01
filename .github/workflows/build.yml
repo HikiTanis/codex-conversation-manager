@@ -49,8 +49,8 @@ jobs:
       - name: Upload Windows package
         uses: actions/upload-artifact@v7
         with:
-          name: CodexConversationMigrator-Windows-v${{ steps.version.outputs.version }}
+          name: CodexConversationManager-Windows-v${{ steps.version.outputs.version }}
           path: |
-            release/CodexConversationMigrator-Windows-v${{ steps.version.outputs.version }}.zip
+            release/CodexConversationManager-Windows-v${{ steps.version.outputs.version }}.zip
             release/SHA256SUMS.txt
           if-no-files-found: error

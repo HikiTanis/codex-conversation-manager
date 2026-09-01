@@ -1,6 +1,6 @@
 # Privacy
 
-Codex Conversation Migrator is local-first and has no telemetry, analytics, advertising, account system, cloud upload, automatic update, or background synchronization feature.
+Codex Conversation Manager is local-first and has no telemetry, analytics, advertising, account system, cloud upload, automatic update, or background synchronization feature.
 
 ## Local data the application can read
 

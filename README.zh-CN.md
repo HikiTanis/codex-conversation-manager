@@ -1,8 +1,8 @@
-# Codex Conversation Migrator
+# Codex Conversation Manager
 
 **Windows 上的 Codex 对话与项目管理、备份和迁移工具。**
 
-[English](README.md) · 当前版本：v1.0.0
+[English](README.md) · 当前版本：v1.0.1
 
 它在本机统一整理 Codex 项目、主对话和子代理对话，解决项目改名或移动后对话失联、会话占用不透明、跨电脑迁移困难，以及删除后侧边栏残留等问题。
 
@@ -39,18 +39,18 @@
 
 本软件是便携版，无需安装：
 
-1. 从 GitHub Releases 下载 `CodexConversationMigrator-Windows-v1.0.0.zip` 和 `SHA256SUMS.txt`。
+1. 从 GitHub Releases 下载 `CodexConversationManager-Windows-v1.0.1.zip` 和 `SHA256SUMS.txt`。
 2. 校验下载文件：
 
    ```powershell
-   $zip = '.\CodexConversationMigrator-Windows-v1.0.0.zip'
+   $zip = '.\CodexConversationManager-Windows-v1.0.1.zip'
    (Get-FileHash $zip -Algorithm SHA256).Hash
    Get-Content .\SHA256SUMS.txt
    ```
 
    两处 SHA-256 应一致。
 3. 将 ZIP 完整解压到一个新文件夹，不要在压缩包内运行，也不要把新旧版本文件混放。
-4. 双击 `Start.cmd`，或运行 `CodexConversationMigrator.exe`。
+4. 双击 `Start.cmd`，或运行 `CodexConversationManager.exe`。
 
 程序当前没有 Authenticode 数字签名，Windows 可能提示“未知发布者”。请只从可信 Release 页面下载并先核对 SHA-256。
 
@@ -117,6 +117,6 @@
 
 脚本会还原固定依赖、编译、运行中英文功能与界面测试、验证候选包，并把 ZIP 和 `SHA256SUMS.txt` 写入 `release/`。`VERSION` 是发布版本的唯一来源。
 
-源码仓库还提供：`docs/releases/v1.0.0.md`（发布说明）、`CHANGELOG.md`（版本记录）、`docs/RELEASING.md`（发布流程）、`.github/SUPPORT.md`（问题反馈）和 `.github/CONTRIBUTING.md`（贡献指南）。
+源码仓库还提供：`docs/releases/v1.0.1.md`（发布说明）、`CHANGELOG.md`（版本记录）、`docs/RELEASING.md`（发布流程）、`.github/SUPPORT.md`（问题反馈）和 `.github/CONTRIBUTING.md`（贡献指南）。
 
 本项目使用 [MIT License](LICENSE)。

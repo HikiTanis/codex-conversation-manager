@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptRoot
-$project = Join-Path $repoRoot 'src\CodexConversationMigrator\CodexConversationMigrator.csproj'
+$project = Join-Path $repoRoot 'src\CodexConversationManager\CodexConversationManager.csproj'
 
 dotnet build $project --configuration $Configuration
 if ($LASTEXITCODE -ne 0) {

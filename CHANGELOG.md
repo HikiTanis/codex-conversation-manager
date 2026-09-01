@@ -6,6 +6,14 @@ All notable changes are documented here. The project follows semantic versioning
 
 No unreleased changes are documented yet.
 
+## [1.0.1] - 2026-09-01
+
+### Changed
+
+- Renamed the product to **Codex Conversation Manager** and the Chinese display name to **Codex 对话与项目管理器**, reflecting its conversation and project management scope.
+- Renamed the solution, source project, executable, portable ZIP, and GitHub-facing release artifacts consistently.
+- Preserved access to existing app trash, transaction metadata, lineage markers, and the saved language preference from the former application data directory.
+
 ## [1.0.0] - 2026-08-31
 
 ### Initial release

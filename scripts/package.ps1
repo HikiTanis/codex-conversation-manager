@@ -19,11 +19,11 @@ if (-not [string]::Equals($Version, $canonicalVersion, [StringComparison]::Ordin
 & (Join-Path $scriptRoot 'Verify-Release.ps1') -Version $Version
 
 $releaseRoot = Join-Path $repoRoot 'release'
-$buildRoot = Join-Path $repoRoot 'src\CodexConversationMigrator\bin\Release\net48'
-$zipPath = Join-Path $releaseRoot "CodexConversationMigrator-Windows-v$Version.zip"
+$buildRoot = Join-Path $repoRoot 'src\CodexConversationManager\bin\Release\net48'
+$zipPath = Join-Path $releaseRoot "CodexConversationManager-Windows-v$Version.zip"
 $stage = Join-Path $releaseRoot ('.stage-' + [Guid]::NewGuid().ToString('N'))
 $candidateRoot = Join-Path $releaseRoot ('.candidate-' + [Guid]::NewGuid().ToString('N'))
-$candidateZip = Join-Path $candidateRoot "CodexConversationMigrator-Windows-v$Version.zip"
+$candidateZip = Join-Path $candidateRoot "CodexConversationManager-Windows-v$Version.zip"
 
 function New-DeterministicZip {
     param(
@@ -71,9 +71,9 @@ try {
 
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
     $files = @(
-        'CodexConversationMigrator.exe',
-        'CodexConversationMigrator.exe.config',
-        'CodexConversationMigrator.xaml'
+        'CodexConversationManager.exe',
+        'CodexConversationManager.exe.config',
+        'CodexConversationManager.xaml'
     )
     foreach ($file in $files) {
         $source = Join-Path $buildRoot $file
@@ -130,9 +130,14 @@ try {
 
         # The verified current ZIP and checksum are now durable. Older versions
         # are removed only after that pair has been published successfully.
-        Get-ChildItem -LiteralPath $releaseRoot -Filter 'CodexConversationMigrator-Windows-v*.zip' -File |
-            Where-Object { -not [string]::Equals($_.FullName, $zipPath, [StringComparison]::OrdinalIgnoreCase) } |
-            Remove-Item -Force
+        foreach ($packagePattern in @(
+            'CodexConversationManager-Windows-v*.zip',
+            'CodexConversationMigrator-Windows-v*.zip'
+        )) {
+            Get-ChildItem -LiteralPath $releaseRoot -Filter $packagePattern -File |
+                Where-Object { -not [string]::Equals($_.FullName, $zipPath, [StringComparison]::OrdinalIgnoreCase) } |
+                Remove-Item -Force
+        }
     }
     finally {
         foreach ($rollbackFile in @($previousZip, $previousHash)) {

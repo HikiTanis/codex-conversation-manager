@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptRoot
-$app = Join-Path $repoRoot 'src\CodexConversationMigrator\bin\Release\net48\CodexConversationMigrator.exe'
+$app = Join-Path $repoRoot 'src\CodexConversationManager\bin\Release\net48\CodexConversationManager.exe'
 $artifactRoot = Join-Path $repoRoot 'artifacts\test'
 $temporaryCodexHome = Join-Path ([IO.Path]::GetTempPath()) ('codex-migrator-test-home-' + [Guid]::NewGuid().ToString('N'))
 $previousCodexHome = $env:CODEX_HOME

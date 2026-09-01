@@ -1,8 +1,8 @@
-# Codex Conversation Migrator
+# Codex Conversation Manager
 
 **Manage, back up, and migrate local Codex conversations and projects on Windows.**
 
-[简体中文](README.zh-CN.md) · Current release: v1.0.0
+[简体中文](README.zh-CN.md) · Current release: v1.0.1
 
 The application keeps Codex projects, main conversations, and subagent conversations organized in one place. It reconnects conversations after a project is renamed or moved, explains local storage use, migrates work between computers, and helps avoid or repair stale sidebar entries during cleanup.
 
@@ -39,18 +39,18 @@ End-user requirements:
 
 The application is portable and does not need an installer:
 
-1. Download `CodexConversationMigrator-Windows-v1.0.0.zip` and `SHA256SUMS.txt` from GitHub Releases.
+1. Download `CodexConversationManager-Windows-v1.0.1.zip` and `SHA256SUMS.txt` from GitHub Releases.
 2. Compare the release checksum:
 
    ```powershell
-   $zip = '.\CodexConversationMigrator-Windows-v1.0.0.zip'
+   $zip = '.\CodexConversationManager-Windows-v1.0.1.zip'
    (Get-FileHash $zip -Algorithm SHA256).Hash
    Get-Content .\SHA256SUMS.txt
    ```
 
    The two SHA-256 values must match.
 3. Extract the complete ZIP into a new folder. Do not run it from inside the archive or mix files from different versions.
-4. Double-click `Start.cmd`, or run `CodexConversationMigrator.exe`.
+4. Double-click `Start.cmd`, or run `CodexConversationManager.exe`.
 
 The executable is not currently Authenticode-signed, so Windows may show an unknown-publisher warning. Download only from a release source you trust and verify the SHA-256 first.
 
@@ -117,6 +117,6 @@ Source builds require Windows 10/11, .NET SDK 8.x, and PowerShell 5.1 or later. 
 
 The script restores pinned dependencies, builds the application, runs Chinese and English functional and UI tests, validates the release candidate, and writes the ZIP plus `SHA256SUMS.txt` to `release/`. `VERSION` is the single source of truth for the release version.
 
-The source repository also contains `docs/releases/v1.0.0.md` (release notes), `CHANGELOG.md` (version history), `docs/RELEASING.md` (maintainer workflow), `.github/SUPPORT.md` (issue reporting), and `.github/CONTRIBUTING.md` (contributor guide).
+The source repository also contains `docs/releases/v1.0.1.md` (release notes), `CHANGELOG.md` (version history), `docs/RELEASING.md` (maintainer workflow), `.github/SUPPORT.md` (issue reporting), and `.github/CONTRIBUTING.md` (contributor guide).
 
 Licensed under the [MIT License](LICENSE).
