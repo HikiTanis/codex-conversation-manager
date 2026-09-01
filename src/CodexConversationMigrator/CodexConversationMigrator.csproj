@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+  <PropertyGroup>
+    <VersionFile>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\..\VERSION'))</VersionFile>
+    <CcmVersionRaw>$([System.IO.File]::ReadAllText('$(VersionFile)'))</CcmVersionRaw>
+    <CcmVersion>$(CcmVersionRaw.Trim())</CcmVersion>
+    <AssemblyName>CodexConversationMigrator</AssemblyName>
+    <RootNamespace>CodexConversationMigrator</RootNamespace>
+    <GenerateAssemblyInfo>True</GenerateAssemblyInfo>
+    <AssemblyTitle>Codex Conversation Migrator</AssemblyTitle>
+    <Description>Local-first management, inspection, backup, migration, and cleanup for Codex conversations, subagents, and projects.</Description>
+    <Product>Codex Conversation Migrator</Product>
+    <Version>$(CcmVersion)</Version>
+    <AssemblyVersion>$(CcmVersion).0</AssemblyVersion>
+    <FileVersion>$(CcmVersion).0</FileVersion>
+    <InformationalVersion>$(CcmVersion)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>False</IncludeSourceRevisionInInformationalVersion>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>True</UseWPF>
+    <UseWindowsForms>True</UseWindowsForms>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <ApplicationIcon>assets\app-icon.ico</ApplicationIcon>
+    <Deterministic>True</Deterministic>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>False</Prefer32Bit>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>portable</DebugType>
+    <DebugSymbols>True</DebugSymbols>
+    <PathMap>$(MSBuildProjectDirectory)=/_/src</PathMap>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Web" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="PresentationCore" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="Microsoft.VisualBasic" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="assets\app-icon.ico" />
+    <Page Remove="CodexConversationMigrator.xaml" />
+    <None Include="CodexConversationMigrator.xaml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
