@@ -140,7 +140,15 @@ internal static class Program
 					tested = true;
 					await controller.InitialLoadTask;
 					IntPtr handle = new WindowInteropHelper(controller.Window).Handle;
-					File.WriteAllText(output, ChromeVerifier.Verify(handle), Encoding.UTF8);
+					string report = ChromeVerifier.Verify(handle);
+					controller.Window.WindowState = WindowState.Maximized;
+					await Task.Delay(180);
+					controller.Window.UpdateLayout();
+					if (!ChromeVerifier.VerifyMaximizedWorkArea(handle, out string maximizedReport))
+					{
+						throw new InvalidOperationException("maximized window extended outside the monitor work area\r\n" + maximizedReport);
+					}
+					File.WriteAllText(output, report + "\r\n" + maximizedReport, Encoding.UTF8);
 					controller.EndBusyForTest();
 					controller.Window.Close();
 				}
@@ -331,6 +339,12 @@ internal static class Program
 						controller.Window.Width = 900.0;
 						controller.Window.Height = 620.0;
 					}
+					else if (renderName.Contains("fullscreen") || renderName.Contains("main-window-max"))
+					{
+						controller.Window.WindowState = WindowState.Maximized;
+						await Task.Delay(180);
+						controller.Window.UpdateLayout();
+					}
 					if (renderName.Contains("import"))
 					{
 						if (renderName.Contains("progress"))
@@ -357,13 +371,9 @@ internal static class Program
 						{
 							throw new InvalidOperationException("conversation preview did not open");
 						}
-						if (renderName.Contains("max") && !controller.MaximizeConversationForTest())
+						if (!controller.TestConversationAutomaticLayoutForTest())
 						{
-							throw new InvalidOperationException("conversation preview did not maximize");
-						}
-						if (renderName.Contains("resize") && !controller.ResizeConversationDialogForTest())
-						{
-							throw new InvalidOperationException("conversation preview resize handles did not resize the dialog");
+							throw new InvalidOperationException("conversation preview did not auto-fit with fixed insets");
 						}
 						if (renderName.Contains("responsive") && !controller.TestConversationFollowsWindowResizeForTest())
 						{
@@ -1695,7 +1705,7 @@ internal static class Program
 			{
 				UiLanguage.Initialize(originalLanguageCode);
 			}
-			return "ImportModes=origin-merge+independent-copy · SamePathCwd=no-op · FormalBackup=.codexchat+.codexproject+legacy · NativeTxn=rollback+commit+delete · LegacyTxnSnapshot=trash-compatibility · Lineage=origin-persist+project-scope+parent-child+fresh-every-time+ambiguity-guard+checksum-guard+outer-archive-guards · IndependentCopy=retained+delete-isolated · TargetedIndex=insert+update+two-project-cwd+native-path+visibility · HistoryMode=legacy+paginated+bidirectional-update+ordinal-gap-guard · ImportRollback=planned-new-files-only+unrelated-preserved+sqlite-compensation+commit-cleanup-failure-safe · RuntimeSelection=cli-version-probe+desktop-install-discovery · DesktopProjectState=existing-remap+create+multi-project+backup+verify · BackupPrewrite=OK · BackfillUnchanged=complete · PendingRunningGuard=OK · ZstdPreflight=OK · Preview=2 messages · Trash=copy+official-delete+index-remove+desktop-catalog-remove+list+index-restore+purge+descendant-staging · PermanentDelete=official-delete+index-remove+desktop-catalog-remove+descendant-cascade · OfficialDeleteRefusal=preserves-local-data · StaleSidebar=current+log-confirmed-legacy+official-repair+ledger+live-descendant-guard+orphan-subagent-visible+exact-location+desktop-catalog-remove+desktop-cache-invalidation+completed-repair-catchup · ProjectGuard+Permanent=OK · ProjectPayload=schema5+two-targets+target-guard+combined-pack+create+inspect+restore+skip+backup+traversal-guard · EnglishCriticalFlows=no-CJK · ResizeGrips=8";
+			return "ImportModes=origin-merge+independent-copy · SamePathCwd=no-op · FormalBackup=.codexchat+.codexproject+legacy · NativeTxn=rollback+commit+delete · LegacyTxnSnapshot=trash-compatibility · Lineage=origin-persist+project-scope+parent-child+fresh-every-time+ambiguity-guard+checksum-guard+outer-archive-guards · IndependentCopy=retained+delete-isolated · TargetedIndex=insert+update+two-project-cwd+native-path+visibility · HistoryMode=legacy+paginated+bidirectional-update+ordinal-gap-guard · ImportRollback=planned-new-files-only+unrelated-preserved+sqlite-compensation+commit-cleanup-failure-safe · RuntimeSelection=cli-version-probe+desktop-install-discovery · DesktopProjectState=existing-remap+create+multi-project+backup+verify · BackupPrewrite=OK · BackfillUnchanged=complete · PendingRunningGuard=OK · ZstdPreflight=OK · Preview=2 messages · Trash=copy+official-delete+index-remove+desktop-catalog-remove+list+index-restore+purge+descendant-staging · PermanentDelete=official-delete+index-remove+desktop-catalog-remove+descendant-cascade · OfficialDeleteRefusal=preserves-local-data · StaleSidebar=current+log-confirmed-legacy+official-repair+ledger+live-descendant-guard+orphan-subagent-visible+exact-location+desktop-catalog-remove+desktop-cache-invalidation+completed-repair-catchup · ProjectGuard+Permanent=OK · ProjectPayload=schema5+two-targets+target-guard+combined-pack+create+inspect+restore+skip+backup+traversal-guard · EnglishCriticalFlows=no-CJK · PreviewLayout=auto-fit+fixed-insets+full-width+complete-scroll-end";
 		}
 		finally
 		{
@@ -1845,13 +1855,12 @@ internal static class Program
 				}
 				string[] array = new string[]
 				{
-					"MergeModeRadio", "CopyModeRadio", "ImportModeHelpText", "ConversationOverlay", "ConversationList", "ConversationCloseButton", "ConversationCanvas", "ConversationDialogHost", "ConversationResizeTop",
-					"ConversationResizeBottom", "ConversationResizeLeft", "ConversationResizeRight", "ConversationResizeTopLeft", "ConversationResizeTopRight", "ConversationResizeBottomLeft", "ConversationResizeBottomRight", "TrashButton", "BackupProjectFilesButton", "ProjectRestorePanel",
+					"MergeModeRadio", "CopyModeRadio", "ImportModeHelpText", "ConversationOverlay", "ConversationList", "ConversationCloseButton", "ConversationCanvas", "ConversationDialogHost", "TrashButton", "BackupProjectFilesButton", "ProjectRestorePanel",
 					"RestoreProjectFilesCheck", "ProjectConflictCombo", "BackupFolderBox", "BrowseBackupFolderButton", "SelectAllProjectsButton", "ClearProjectsButton", "TargetPathLabel", "TargetPathHelpText", "MaximizeGlyph", "RestoreGlyph",
-					"ProjectBackupModeRadio", "ConversationBackupModeRadio", "BackupModeHelpText", "ProjectSelectionTools", "SessionSelectionTools", "ToggleSessionSelectionButton", "DeleteSelectedSessionsButton", "ProjectPaneTitle", "ProjectPaneSubtitle", "SessionModeHint", "SelectionHelpText", "ConversationMaximizeGlyph",
-					"ConversationRestoreGlyph", "MainSessionsTabRadio", "SubagentSessionsTabRadio", "CopyProjectPathButton", "ProjectSizeText",
+					"ProjectBackupModeRadio", "ConversationBackupModeRadio", "BackupModeHelpText", "ProjectSelectionTools", "SessionSelectionTools", "ToggleSessionSelectionButton", "DeleteSelectedSessionsButton", "ProjectPaneTitle", "ProjectPaneSubtitle", "SessionModeHint", "SelectionHelpText",
+					"MainSessionsTabRadio", "SubagentSessionsTabRadio", "CopyProjectPathButton", "ProjectSizeText",
 					"BrowsePackageButton", "BrowseTargetButton", "ImportProgressPanel", "ImportStageText", "ImportStageDetailText", "ImportElapsedText", "ImportStageProgress", "ImportWorkflowGrid", "ImportActionBar", "LanguageButton",
-					"ConversationNavigationHost", "ConversationNavigationScroller", "ConversationNavigationRail", "ConversationNavigationPreviewPopup", "ConversationNavigationPreviewTitle", "ConversationNavigationPreviewResponse"
+					"ConversationContentLayout", "ConversationNavigationHost", "ConversationNavigationScroller", "ConversationNavigationRail", "ConversationNavigationPreviewPopup", "ConversationNavigationPreviewTitle", "ConversationNavigationPreviewResponse"
 				};
 				string[] array2 = array;
 				foreach (string text2 in array2)

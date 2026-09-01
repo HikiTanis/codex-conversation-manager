@@ -70,18 +70,6 @@
             </Style.Triggers>
         </Style>
 
-        <Style x:Key="ConversationResizeThumb" TargetType="{x:Type Thumb}">
-            <Setter Property="Background" Value="#01000000" />
-            <Setter Property="Focusable" Value="False" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="{x:Type Thumb}">
-                        <Border Background="{TemplateBinding Background}" />
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
         <Style x:Key="ConversationNavigationButton" TargetType="Button">
             <Setter Property="Width" Value="36" />
             <Setter Property="Height" Value="10" />
@@ -523,10 +511,10 @@
                         <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" Focusable="False" />
                     </Track.DecreaseRepeatButton>
                     <Track.Thumb>
-                        <Thumb MinHeight="30">
+                        <Thumb MinHeight="32" SnapsToDevicePixels="True">
                             <Thumb.Template>
                                 <ControlTemplate TargetType="Thumb">
-                                    <Border x:Name="ThumbSurface" Width="8" MinHeight="30" Margin="2,1" Background="#BFC3BC" CornerRadius="5" />
+                                    <Border x:Name="ThumbSurface" Width="8" MinHeight="32" Margin="2,0" Background="#BFC3BC" CornerRadius="5" SnapsToDevicePixels="True" />
                                     <ControlTemplate.Triggers>
                                         <Trigger Property="IsMouseOver" Value="True">
                                             <Setter TargetName="ThumbSurface" Property="Background" Value="#AEB2AA" />
@@ -650,7 +638,7 @@
                         <Border Margin="10,1,0,0" Padding="8,3" CornerRadius="7" Background="#F0F1ED">
                             <TextBlock Text="对话与项目管理器" Foreground="{StaticResource Muted}" FontSize="12" />
                         </Border>
-                        <TextBlock Text="v1.0.2" Foreground="{StaticResource Faint}" FontSize="11.5" Margin="9,2,0,0" VerticalAlignment="Center" />
+                        <TextBlock Text="v1.0.3" Foreground="{StaticResource Faint}" FontSize="11.5" Margin="9,2,0,0" VerticalAlignment="Center" />
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" shell:WindowChrome.IsHitTestVisibleInChrome="True">
                         <Button x:Name="LanguageButton" Style="{StaticResource LanguageButton}" Content="EN" ToolTip="切换为英文" Margin="0,0,8,0" />
@@ -1074,7 +1062,7 @@
                             <RowDefinition Height="54" />
                         </Grid.RowDefinitions>
 
-                        <Border x:Name="ConversationHeader" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" Padding="22,0" Background="Transparent" Cursor="Arrow" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                        <Border x:Name="ConversationHeader" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" Padding="22,0" Background="Transparent" shell:WindowChrome.IsHitTestVisibleInChrome="True">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
@@ -1088,15 +1076,6 @@
                                     <Button x:Name="ConversationMinimizeButton" Style="{StaticResource ChromeButton}" ToolTip="最小化到任务栏">
                                         <Border Width="12" Height="1.4" Background="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" VerticalAlignment="Center" />
                                     </Button>
-                                    <Button x:Name="ConversationMaximizeButton" Style="{StaticResource ChromeButton}" ToolTip="放大预览框">
-                                        <Grid Width="16" Height="16">
-                                            <Border x:Name="ConversationMaximizeGlyph" Width="12" Height="12" BorderBrush="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" BorderThickness="1.2" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                            <Grid x:Name="ConversationRestoreGlyph" Visibility="Collapsed">
-                                                <Border Width="10" Height="10" BorderBrush="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" BorderThickness="1.1" Margin="3,0,0,3" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                                <Border Width="10" Height="10" Background="#FFFEFC" BorderBrush="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" BorderThickness="1.1" Margin="0,3,3,0" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                            </Grid>
-                                        </Grid>
-                                    </Button>
                                     <Button x:Name="ConversationCloseButton" Style="{StaticResource CloseButton}" ToolTip="关闭预览">
                                         <Grid Width="16" Height="16">
                                             <Line X1="2" Y1="2" X2="14" Y2="14" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" StrokeThickness="1.4" />
@@ -1107,12 +1086,12 @@
                             </Grid>
                         </Border>
 
-                        <Grid Grid.Row="1" Margin="12,12,18,12">
+                        <Grid x:Name="ConversationContentLayout" Grid.Row="1" Margin="18,12,18,0" HorizontalAlignment="Stretch">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <Border x:Name="ConversationNavigationHost" Width="38" MaxHeight="640" Margin="2,4,8,4" HorizontalAlignment="Left" VerticalAlignment="Center" Background="Transparent" Visibility="Collapsed" AutomationProperties.Name="用户消息导航">
+                            <Border x:Name="ConversationNavigationHost" Width="38" Margin="2,4,8,4" HorizontalAlignment="Left" VerticalAlignment="Stretch" Background="Transparent" Visibility="Collapsed" AutomationProperties.Name="用户消息导航">
                                 <ScrollViewer x:Name="ConversationNavigationScroller" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" CanContentScroll="False" PanningMode="VerticalOnly" Focusable="False">
                                     <ScrollViewer.OpacityMask>
                                         <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
@@ -1180,20 +1159,12 @@
 
                         <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="20,0">
                             <Grid>
-                                <TextBlock Text="只读预览，不会修改原会话 · 拖动标题栏移动，拖动边角缩放" Foreground="{StaticResource Muted}" FontSize="11.5" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,126,0" />
+                                <TextBlock Text="只读预览，不会修改原会话" Foreground="{StaticResource Muted}" FontSize="11.5" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,126,0" />
                                 <Button x:Name="CopyThreadIdButton" Style="{StaticResource SecondaryButton}" Content="复制 Thread ID" HorizontalAlignment="Right" VerticalAlignment="Center" Height="34" MinWidth="112" />
                             </Grid>
                         </Border>
                     </Grid>
                 </Border>
-                        <Thumb x:Name="ConversationResizeTop" Style="{StaticResource ConversationResizeThumb}" Height="10" Margin="14,0" VerticalAlignment="Top" Cursor="SizeNS" Panel.ZIndex="40" />
-                        <Thumb x:Name="ConversationResizeBottom" Style="{StaticResource ConversationResizeThumb}" Height="10" Margin="14,0" VerticalAlignment="Bottom" Cursor="SizeNS" Panel.ZIndex="40" />
-                        <Thumb x:Name="ConversationResizeLeft" Style="{StaticResource ConversationResizeThumb}" Width="10" Margin="0,14" HorizontalAlignment="Left" Cursor="SizeWE" Panel.ZIndex="40" />
-                        <Thumb x:Name="ConversationResizeRight" Style="{StaticResource ConversationResizeThumb}" Width="10" Margin="0,14" HorizontalAlignment="Right" Cursor="SizeWE" Panel.ZIndex="40" />
-                        <Thumb x:Name="ConversationResizeTopLeft" Style="{StaticResource ConversationResizeThumb}" Width="18" Height="18" HorizontalAlignment="Left" VerticalAlignment="Top" Cursor="SizeNWSE" Panel.ZIndex="50" />
-                        <Thumb x:Name="ConversationResizeTopRight" Style="{StaticResource ConversationResizeThumb}" Width="18" Height="18" HorizontalAlignment="Right" VerticalAlignment="Top" Cursor="SizeNESW" Panel.ZIndex="50" />
-                        <Thumb x:Name="ConversationResizeBottomLeft" Style="{StaticResource ConversationResizeThumb}" Width="18" Height="18" HorizontalAlignment="Left" VerticalAlignment="Bottom" Cursor="SizeNESW" Panel.ZIndex="50" />
-                        <Thumb x:Name="ConversationResizeBottomRight" Style="{StaticResource ConversationResizeThumb}" Width="18" Height="18" HorizontalAlignment="Right" VerticalAlignment="Bottom" Cursor="SizeNWSE" Panel.ZIndex="50" />
                     </Grid>
                 </Canvas>
             </Grid>

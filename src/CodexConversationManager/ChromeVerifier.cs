@@ -16,9 +16,23 @@ internal static class ChromeVerifier
 		public int Bottom;
 	}
 
+	[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+	private struct MonitorInfo
+	{
+		public int Size;
+
+		public Rect Monitor;
+
+		public Rect WorkArea;
+
+		public uint Flags;
+	}
+
 	private const int WM_NCHITTEST = 132;
 
 	private const int WM_GETICON = 127;
+
+	private const uint MONITOR_DEFAULTTONEAREST = 2;
 
 	private const int GWL_STYLE = -16;
 
@@ -34,6 +48,19 @@ internal static class ChromeVerifier
 
 	[DllImport("user32.dll")]
 	private static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
+
+	[DllImport("user32.dll")]
+	private static extern bool GetClientRect(IntPtr hwnd, out Rect rect);
+
+	[DllImport("user32.dll")]
+	private static extern bool ClientToScreen(IntPtr hwnd, ref System.Drawing.Point point);
+
+	[DllImport("user32.dll")]
+	private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+
+	[DllImport("user32.dll", CharSet = CharSet.Auto)]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo monitorInfo);
 
 	[DllImport("user32.dll", EntryPoint = "GetWindowLongPtr")]
 	private static extern IntPtr GetWindowLongPtr64(IntPtr hwnd, int index);
@@ -66,6 +93,46 @@ internal static class ChromeVerifier
 		bool flag = (num & 0x40000) != 0 && (num & 0x20000) != 0 && (num & 0x10000) != 0;
 		bool flag2 = num2 == 13 && num3 == 14 && num4 == 16 && num5 == 17 && num6 == 2;
 		return "StylesOk=" + flag + "\r\nTopLeft=" + num2 + "\r\nTopRight=" + num3 + "\r\nBottomLeft=" + num4 + "\r\nBottomRight=" + num5 + "\r\nCaption=" + num6 + "\r\nTaskbarIcon=" + hasIcon + "\r\nChromeOk=" + (flag && flag2 && hasIcon);
+	}
+
+	public static bool VerifyMaximizedWorkArea(IntPtr hwnd, out string report)
+	{
+		if (!GetClientRect(hwnd, out Rect clientRect))
+		{
+			throw new InvalidOperationException("GetClientRect failed");
+		}
+		System.Drawing.Point clientOrigin = new System.Drawing.Point(0, 0);
+		if (!ClientToScreen(hwnd, ref clientOrigin))
+		{
+			throw new InvalidOperationException("ClientToScreen failed");
+		}
+		IntPtr monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+		MonitorInfo monitorInfo = new MonitorInfo
+		{
+			Size = Marshal.SizeOf(typeof(MonitorInfo))
+		};
+		if (monitor == IntPtr.Zero || !GetMonitorInfo(monitor, ref monitorInfo))
+		{
+			throw new InvalidOperationException("GetMonitorInfo failed");
+		}
+		int clientLeft = clientOrigin.X;
+		int clientTop = clientOrigin.Y;
+		int clientRight = clientLeft + clientRect.Right - clientRect.Left;
+		int clientBottom = clientTop + clientRect.Bottom - clientRect.Top;
+		Rect workArea = monitorInfo.WorkArea;
+		const int edgeTolerance = 2;
+		const int fillTolerance = 20;
+		bool inside = clientLeft >= workArea.Left - edgeTolerance &&
+			clientTop >= workArea.Top - edgeTolerance &&
+			clientRight <= workArea.Right + edgeTolerance &&
+			clientBottom <= workArea.Bottom + edgeTolerance;
+		bool fills = clientRight - clientLeft >= workArea.Right - workArea.Left - fillTolerance &&
+			clientBottom - clientTop >= workArea.Bottom - workArea.Top - fillTolerance;
+		bool result = inside && fills;
+		report = "ClientBounds=" + clientLeft + "," + clientTop + "," + clientRight + "," + clientBottom +
+			"\r\nWorkArea=" + workArea.Left + "," + workArea.Top + "," + workArea.Right + "," + workArea.Bottom +
+			"\r\nMaximizedWorkAreaOk=" + result;
+		return result;
 	}
 
 	private static bool HasWindowIcon(IntPtr hwnd)

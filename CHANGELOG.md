@@ -6,6 +6,17 @@ All notable changes are documented here. The project follows semantic versioning
 
 No unreleased changes are documented yet.
 
+## [1.0.3] - 2026-09-01
+
+### Fixed
+
+- Simplified conversation preview to one automatic layout: it opens nearly full-size and follows the main window with the same 16-pixel outer inset at every size.
+- Removed the preview-only maximize, drag, and edge-resize controls so the window no longer exposes competing layout states.
+- Made the message area use the available width with fixed content margins instead of adding progressively larger empty side areas on wide screens.
+- Extended the conversation scroller to the footer boundary and corrected the thumb rendering at the bottom of long conversations.
+- Kept the main window inside the active monitor work area so the preview footer and actions remain above the Windows taskbar.
+- Added Chinese and English render coverage for normal, resized, maximized-main-window, subagent, and long-conversation previews.
+
 ## [1.0.2] - 2026-09-01
 
 ### Fixed

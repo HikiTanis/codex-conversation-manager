@@ -24,6 +24,8 @@ namespace CodexConversationManager;
 
 internal sealed class MainWindowController
 {
+	private const double ConversationPreviewInset = 16.0;
+
 	private sealed class BackupProjectSelection
 	{
 		public ProjectGroup Project { get; set; }
@@ -224,11 +226,7 @@ internal sealed class MainWindowController
 
 	private readonly FrameworkElement conversationDialogHost;
 
-	private readonly Border conversationHeader;
-
 	private readonly System.Windows.Controls.Button conversationMinimizeButton;
-
-	private readonly System.Windows.Controls.Button conversationMaximizeButton;
 
 	private readonly System.Windows.Controls.Button conversationCloseButton;
 
@@ -237,10 +235,6 @@ internal sealed class MainWindowController
 	private readonly FrameworkElement maximizeGlyph;
 
 	private readonly FrameworkElement restoreGlyph;
-
-	private readonly FrameworkElement conversationMaximizeGlyph;
-
-	private readonly FrameworkElement conversationRestoreGlyph;
 
 	private List<ProjectGroup> projects = new List<ProjectGroup>();
 
@@ -287,28 +281,6 @@ internal sealed class MainWindowController
 
 	private bool conversationDialogInitialized;
 
-	private bool conversationDialogMaximized;
-
-	private bool conversationHeaderDragging;
-
-	private Point conversationHeaderDragStart;
-
-	private double conversationHeaderStartLeft;
-
-	private double conversationHeaderStartTop;
-
-	private double conversationRestoreLeft;
-
-	private double conversationRestoreTop;
-
-	private double conversationRestoreWidth = 1180.0;
-
-	private double conversationRestoreHeight = 720.0;
-
-	private double conversationCanvasWidth;
-
-	private double conversationCanvasHeight;
-
 	private readonly TaskCompletionSource<bool> initialLoadCompletion = new TaskCompletionSource<bool>();
 
 	public Window Window => window;
@@ -327,6 +299,7 @@ internal sealed class MainWindowController
 		}
 		string localizedXaml = UiLanguage.LoadXaml(text);
 		window = (Window)XamlReader.Parse(localizedXaml);
+		WindowWorkArea.Attach(window);
 		window.MinWidth = UiLanguage.IsEnglish ? 1040.0 : 900.0;
 		window.Tag = this;
 		backupFolderBox = Find<System.Windows.Controls.TextBox>("BackupFolderBox");
@@ -409,15 +382,11 @@ internal sealed class MainWindowController
 		conversationNavigationPreviewResponse = Find<TextBlock>("ConversationNavigationPreviewResponse");
 		conversationCanvas = Find<Canvas>("ConversationCanvas");
 		conversationDialogHost = Find<FrameworkElement>("ConversationDialogHost");
-		conversationHeader = Find<Border>("ConversationHeader");
 		conversationMinimizeButton = Find<System.Windows.Controls.Button>("ConversationMinimizeButton");
-		conversationMaximizeButton = Find<System.Windows.Controls.Button>("ConversationMaximizeButton");
 		conversationCloseButton = Find<System.Windows.Controls.Button>("ConversationCloseButton");
 		copyThreadIdButton = Find<System.Windows.Controls.Button>("CopyThreadIdButton");
 		maximizeGlyph = Find<FrameworkElement>("MaximizeGlyph");
 		restoreGlyph = Find<FrameworkElement>("RestoreGlyph");
-		conversationMaximizeGlyph = Find<FrameworkElement>("ConversationMaximizeGlyph");
-		conversationRestoreGlyph = Find<FrameworkElement>("ConversationRestoreGlyph");
 		backupFolderBox.Text = DefaultBackupFolder();
 		languageButton.Content = UiLanguage.IsEnglish ? "中文" : "EN";
 		languageButton.ToolTip = UiLanguage.IsEnglish ? "Switch to Chinese" : "切换到英文";
@@ -813,9 +782,7 @@ internal sealed class MainWindowController
 			conversationScrollViewer.ScrollableHeight > 0.0 &&
 			conversationScrollViewer.VerticalOffset >= conversationScrollViewer.ScrollableHeight - 1.0 &&
 			activeConversationMessageIndex == previewMessages.Count - 1;
-		bool nearMainWindowSize = conversationCanvas.ActualWidth <= 0.0 ||
-			(conversationDialogHost.ActualWidth >= conversationCanvas.ActualWidth - 64.0 &&
-			 conversationDialogHost.ActualHeight >= conversationCanvas.ActualHeight - 64.0);
+		bool dialogLayout = TestConversationAutomaticLayoutForTest();
 		int expectedUserMessages = previewMessages.Count((ConversationMessage message) => message.IsUser && !message.IsNotice);
 		bool railVisible = conversationNavigationHost.Visibility == Visibility.Visible &&
 			conversationNavigationItems.Count == expectedUserMessages &&
@@ -831,7 +798,7 @@ internal sealed class MainWindowController
 		bool returnedToLatest = conversationScrollViewer != null &&
 			conversationScrollViewer.VerticalOffset >= conversationScrollViewer.ScrollableHeight - 1.0 &&
 			activeConversationMessageIndex == previewMessages.Count - 1;
-		return startsAtLatest && nearMainWindowSize && railVisible && pixelScrolling && reachedFirst && returnedToLatest;
+		return startsAtLatest && dialogLayout && railVisible && pixelScrolling && reachedFirst && returnedToLatest;
 	}
 
 	public bool ShowConversationNavigationPreviewForTest()
@@ -850,28 +817,6 @@ internal sealed class MainWindowController
 			!string.IsNullOrWhiteSpace(conversationNavigationPreviewTitle.Text);
 	}
 
-	public bool ResizeConversationDialogForTest()
-	{
-		if (conversationOverlay.Visibility != Visibility.Visible)
-		{
-			return false;
-		}
-		InitializeConversationDialog();
-		double actualWidth = conversationDialogHost.ActualWidth;
-		double actualHeight = conversationDialogHost.ActualHeight;
-		Thumb thumb = Find<Thumb>("ConversationResizeBottomRight");
-		DragDeltaEventArgs e = new DragDeltaEventArgs(64.0, 42.0);
-		e.RoutedEvent = Thumb.DragDeltaEvent;
-		DragDeltaEventArgs e2 = e;
-		thumb.RaiseEvent(e2);
-		conversationDialogHost.UpdateLayout();
-		if (conversationDialogHost.ActualWidth > actualWidth + 40.0)
-		{
-			return conversationDialogHost.ActualHeight > actualHeight + 25.0;
-		}
-		return false;
-	}
-
 	public bool TestConversationFollowsWindowResizeForTest()
 	{
 		if (conversationOverlay.Visibility != Visibility.Visible || window.WindowState != WindowState.Normal)
@@ -879,10 +824,6 @@ internal sealed class MainWindowController
 			return false;
 		}
 		InitializeConversationDialog();
-		if (conversationDialogMaximized)
-		{
-			ToggleConversationDialogMaximize();
-		}
 		double originalWindowWidth = window.Width;
 		double originalWindowHeight = window.Height;
 		double originalCanvasWidth = conversationCanvas.ActualWidth;
@@ -895,8 +836,9 @@ internal sealed class MainWindowController
 		conversationOverlay.UpdateLayout();
 		bool expanded = conversationCanvas.ActualWidth > originalCanvasWidth + 100.0 &&
 			conversationCanvas.ActualHeight > originalCanvasHeight + 70.0 &&
-			conversationDialogHost.ActualWidth > originalDialogWidth + 80.0 &&
-			conversationDialogHost.ActualHeight > originalDialogHeight + 60.0;
+			Math.Abs((conversationDialogHost.ActualWidth - originalDialogWidth) - (conversationCanvas.ActualWidth - originalCanvasWidth)) <= 3.0 &&
+			Math.Abs((conversationDialogHost.ActualHeight - originalDialogHeight) - (conversationCanvas.ActualHeight - originalCanvasHeight)) <= 3.0 &&
+			TestConversationAutomaticLayoutForTest();
 		window.Width = originalWindowWidth;
 		window.Height = originalWindowHeight;
 		window.UpdateLayout();
@@ -905,20 +847,29 @@ internal sealed class MainWindowController
 			Math.Abs(conversationCanvas.ActualHeight - originalCanvasHeight) <= 2.0 &&
 			Math.Abs(conversationDialogHost.ActualWidth - originalDialogWidth) <= 3.0 &&
 			Math.Abs(conversationDialogHost.ActualHeight - originalDialogHeight) <= 3.0;
-		return expanded && restored;
+		return expanded && restored && TestConversationAutomaticLayoutForTest();
 	}
 
-	public bool MaximizeConversationForTest()
+	public bool TestConversationAutomaticLayoutForTest()
 	{
 		if (conversationOverlay.Visibility != Visibility.Visible)
 		{
 			return false;
 		}
-		if (!conversationDialogMaximized)
-		{
-			ToggleConversationDialogMaximize();
-		}
-		return conversationDialogMaximized && conversationRestoreGlyph.Visibility == Visibility.Visible;
+		InitializeConversationDialog();
+		conversationOverlay.UpdateLayout();
+		FrameworkElement contentLayout = Find<FrameworkElement>("ConversationContentLayout");
+		double rightInset = conversationCanvas.ActualWidth - DialogLeft() - conversationDialogHost.ActualWidth;
+		double bottomInset = conversationCanvas.ActualHeight - DialogTop() - conversationDialogHost.ActualHeight;
+		bool fixedInsets = Math.Abs(DialogLeft() - ConversationPreviewInset) <= 1.5 &&
+			Math.Abs(DialogTop() - ConversationPreviewInset) <= 1.5 &&
+			Math.Abs(rightInset - ConversationPreviewInset) <= 1.5 &&
+			Math.Abs(bottomInset - ConversationPreviewInset) <= 1.5;
+		bool contentUsesAvailableWidth = contentLayout.ActualWidth > 0.0 &&
+			contentLayout.ActualWidth >= conversationDialogHost.ActualWidth - 42.0;
+		bool navigationFits = conversationNavigationHost.Visibility != Visibility.Visible ||
+			conversationNavigationHost.ActualHeight <= contentLayout.ActualHeight + 0.5;
+		return fixedInsets && contentUsesAvailableWidth && navigationFits;
 	}
 
 	private static System.Windows.Controls.Button FindNamedButton(DependencyObject root, string name)
@@ -1114,20 +1065,9 @@ internal sealed class MainWindowController
 		{
 			window.WindowState = WindowState.Minimized;
 		};
-		conversationMaximizeButton.Click += delegate
-		{
-			ToggleConversationDialogMaximize();
-		};
 		conversationCloseButton.Click += delegate
 		{
 			HideConversation();
-		};
-		conversationHeader.MouseLeftButtonDown += ConversationHeaderMouseLeftButtonDown;
-		conversationHeader.MouseMove += ConversationHeaderMouseMove;
-		conversationHeader.MouseLeftButtonUp += ConversationHeaderMouseLeftButtonUp;
-		conversationHeader.LostMouseCapture += delegate
-		{
-			conversationHeaderDragging = false;
 		};
 		conversationCanvas.SizeChanged += ConversationCanvasSizeChanged;
 		conversationNavigationHost.MouseLeave += delegate
@@ -1155,21 +1095,12 @@ internal sealed class MainWindowController
 			conversationNavigationPressedItem = null;
 		};
 		conversationList.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(ConversationListScrollChanged));
-		WireConversationResizeThumb("ConversationResizeLeft", -1, 0);
-		WireConversationResizeThumb("ConversationResizeRight", 1, 0);
-		WireConversationResizeThumb("ConversationResizeTop", 0, -1);
-		WireConversationResizeThumb("ConversationResizeBottom", 0, 1);
-		WireConversationResizeThumb("ConversationResizeTopLeft", -1, -1);
-		WireConversationResizeThumb("ConversationResizeTopRight", 1, -1);
-		WireConversationResizeThumb("ConversationResizeBottomLeft", -1, 1);
-		WireConversationResizeThumb("ConversationResizeBottomRight", 1, 1);
 		copyThreadIdButton.Click += delegate
 		{
 			CopyPreviewedThreadId();
 		};
 		UpdateBackupMode();
 		UpdateSessionTypeView();
-		UpdateConversationMaximizeGlyph();
 		window.PreviewKeyDown += delegate(object sender, System.Windows.Input.KeyEventArgs e)
 		{
 			if (e.Key == Key.Escape && conversationOverlay.Visibility == Visibility.Visible)
@@ -1262,244 +1193,34 @@ internal sealed class MainWindowController
 		Find<System.Windows.Controls.Button>("MaximizeButton").ToolTip = UiLanguage.T(maximized ? "还原" : "最大化");
 	}
 
-	private void WireConversationResizeThumb(string name, int horizontalEdge, int verticalEdge)
-	{
-		Thumb thumb = Find<Thumb>(name);
-		thumb.DragStarted += delegate
-		{
-			conversationDialogMaximized = false;
-			UpdateConversationMaximizeGlyph();
-		};
-		thumb.DragDelta += delegate(object sender, DragDeltaEventArgs e)
-		{
-			ResizeConversationDialog(horizontalEdge, verticalEdge, e.HorizontalChange, e.VerticalChange);
-		};
-	}
-
-	private void ConversationHeaderMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-	{
-		if (e.ChangedButton == MouseButton.Left && ResolveActionButton(e.OriginalSource as DependencyObject) == null)
-		{
-			if (e.ClickCount == 2)
-			{
-				ToggleConversationDialogMaximize();
-				e.Handled = true;
-			}
-			else if (!conversationDialogMaximized)
-			{
-				conversationHeaderDragging = true;
-				conversationHeaderDragStart = e.GetPosition(conversationCanvas);
-				conversationHeaderStartLeft = DialogLeft();
-				conversationHeaderStartTop = DialogTop();
-				conversationHeader.CaptureMouse();
-				e.Handled = true;
-			}
-		}
-	}
-
-	private void ConversationHeaderMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
-	{
-		if (conversationHeaderDragging && e.LeftButton == MouseButtonState.Pressed)
-		{
-			Point position = e.GetPosition(conversationCanvas);
-			double value = conversationHeaderStartLeft + position.X - conversationHeaderDragStart.X;
-			double value2 = conversationHeaderStartTop + position.Y - conversationHeaderDragStart.Y;
-			Canvas.SetLeft(conversationDialogHost, Clamp(value, 0.0, Math.Max(0.0, conversationCanvas.ActualWidth - conversationDialogHost.ActualWidth)));
-			Canvas.SetTop(conversationDialogHost, Clamp(value2, 0.0, Math.Max(0.0, conversationCanvas.ActualHeight - conversationDialogHost.ActualHeight)));
-		}
-	}
-
-	private void ConversationHeaderMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
-	{
-		if (conversationHeaderDragging)
-		{
-			conversationHeaderDragging = false;
-			conversationHeader.ReleaseMouseCapture();
-			RememberConversationRestoreBounds();
-			e.Handled = true;
-		}
-	}
-
 	private void ConversationCanvasSizeChanged(object sender, SizeChangedEventArgs e)
 	{
-		double newWidth = e.NewSize.Width;
-		double newHeight = e.NewSize.Height;
-		double oldWidth = conversationCanvasWidth > 0.0 ? conversationCanvasWidth : e.PreviousSize.Width;
-		double oldHeight = conversationCanvasHeight > 0.0 ? conversationCanvasHeight : e.PreviousSize.Height;
-		conversationCanvasWidth = newWidth;
-		conversationCanvasHeight = newHeight;
-		if (!conversationDialogInitialized || newWidth <= 0.0 || newHeight <= 0.0)
+		if (conversationDialogInitialized && e.NewSize.Width > 0.0 && e.NewSize.Height > 0.0)
 		{
-			return;
+			FitConversationDialogToCanvas();
 		}
-		if (oldWidth <= 0.0 || oldHeight <= 0.0)
-		{
-			EnsureConversationDialogFits();
-			return;
-		}
-		double widthScale = newWidth / oldWidth;
-		double heightScale = newHeight / oldHeight;
-		if (conversationDialogMaximized)
-		{
-			ScaleConversationRestoreBounds(widthScale, heightScale, newWidth, newHeight);
-			EnsureConversationDialogFits();
-			return;
-		}
-		double width = conversationDialogHost.ActualWidth > 0.0 ? conversationDialogHost.ActualWidth : conversationDialogHost.Width;
-		double height = conversationDialogHost.ActualHeight > 0.0 ? conversationDialogHost.ActualHeight : conversationDialogHost.Height;
-		conversationDialogHost.Width = Clamp(width * widthScale, conversationDialogHost.MinWidth, Math.Max(conversationDialogHost.MinWidth, newWidth - 8.0));
-		conversationDialogHost.Height = Clamp(height * heightScale, conversationDialogHost.MinHeight, Math.Max(conversationDialogHost.MinHeight, newHeight - 8.0));
-		Canvas.SetLeft(conversationDialogHost, DialogLeft() * widthScale);
-		Canvas.SetTop(conversationDialogHost, DialogTop() * heightScale);
-		EnsureConversationDialogFits();
-		RememberConversationRestoreBounds();
 	}
 
 	private void InitializeConversationDialog()
 	{
 		conversationOverlay.UpdateLayout();
-		if (!(conversationCanvas.ActualWidth <= 0.0) && !(conversationCanvas.ActualHeight <= 0.0))
+		if (conversationCanvas.ActualWidth > 0.0 && conversationCanvas.ActualHeight > 0.0)
 		{
-			conversationCanvasWidth = conversationCanvas.ActualWidth;
-			conversationCanvasHeight = conversationCanvas.ActualHeight;
-			if (!conversationDialogInitialized)
-			{
-				conversationDialogHost.Width = Math.Max(conversationDialogHost.MinWidth, conversationCanvas.ActualWidth - 56.0);
-				conversationDialogHost.Height = Math.Max(conversationDialogHost.MinHeight, conversationCanvas.ActualHeight - 56.0);
-				CenterConversationDialog();
-				conversationRestoreLeft = DialogLeft();
-				conversationRestoreTop = DialogTop();
-				conversationRestoreWidth = conversationDialogHost.Width;
-				conversationRestoreHeight = conversationDialogHost.Height;
-				conversationDialogInitialized = true;
-			}
-			EnsureConversationDialogFits();
+			conversationDialogInitialized = true;
+			FitConversationDialogToCanvas();
 		}
 	}
 
-	private void ToggleConversationDialogMaximize()
+	private void FitConversationDialogToCanvas()
 	{
-		InitializeConversationDialog();
-		if (!conversationDialogMaximized)
-		{
-			conversationRestoreLeft = DialogLeft();
-			conversationRestoreTop = DialogTop();
-			conversationRestoreWidth = conversationDialogHost.ActualWidth;
-			conversationRestoreHeight = conversationDialogHost.ActualHeight;
-			conversationDialogMaximized = true;
-		}
-		else
-		{
-			conversationDialogMaximized = false;
-			conversationDialogHost.Width = conversationRestoreWidth;
-			conversationDialogHost.Height = conversationRestoreHeight;
-			Canvas.SetLeft(conversationDialogHost, conversationRestoreLeft);
-			Canvas.SetTop(conversationDialogHost, conversationRestoreTop);
-		}
-		UpdateConversationMaximizeGlyph();
-		EnsureConversationDialogFits();
-	}
-
-	private void UpdateConversationMaximizeGlyph()
-	{
-		conversationMaximizeGlyph.Visibility = conversationDialogMaximized ? Visibility.Collapsed : Visibility.Visible;
-		conversationRestoreGlyph.Visibility = conversationDialogMaximized ? Visibility.Visible : Visibility.Collapsed;
-		conversationMaximizeButton.ToolTip = UiLanguage.T(conversationDialogMaximized ? "还原预览框" : "放大预览框");
-	}
-
-	private void ShrinkConversationDialog()
-	{
-		InitializeConversationDialog();
-		conversationDialogMaximized = false;
-		conversationDialogHost.Width = Math.Min(720.0, Math.Max(conversationDialogHost.MinWidth, conversationCanvas.ActualWidth - 36.0));
-		conversationDialogHost.Height = Math.Min(480.0, Math.Max(conversationDialogHost.MinHeight, conversationCanvas.ActualHeight - 36.0));
-		UpdateConversationMaximizeGlyph();
-		CenterConversationDialog();
-	}
-
-	private void ResizeConversationDialog(int horizontalEdge, int verticalEdge, double horizontalChange, double verticalChange)
-	{
-		InitializeConversationDialog();
-		double num = DialogLeft();
-		double num2 = DialogTop();
-		double num3 = conversationDialogHost.ActualWidth;
-		double num4 = conversationDialogHost.ActualHeight;
-		if (horizontalEdge < 0)
-		{
-			double num5 = num + num3;
-			double num6 = Clamp(num + horizontalChange, 4.0, num5 - conversationDialogHost.MinWidth);
-			num = num6;
-			num3 = num5 - num6;
-		}
-		else if (horizontalEdge > 0)
-		{
-			num3 = Clamp(num3 + horizontalChange, conversationDialogHost.MinWidth, Math.Max(conversationDialogHost.MinWidth, conversationCanvas.ActualWidth - num - 4.0));
-		}
-		if (verticalEdge < 0)
-		{
-			double num7 = num2 + num4;
-			double num8 = Clamp(num2 + verticalChange, 4.0, num7 - conversationDialogHost.MinHeight);
-			num2 = num8;
-			num4 = num7 - num8;
-		}
-		else if (verticalEdge > 0)
-		{
-			num4 = Clamp(num4 + verticalChange, conversationDialogHost.MinHeight, Math.Max(conversationDialogHost.MinHeight, conversationCanvas.ActualHeight - num2 - 4.0));
-		}
-		conversationDialogHost.Width = num3;
-		conversationDialogHost.Height = num4;
-		Canvas.SetLeft(conversationDialogHost, num);
-		Canvas.SetTop(conversationDialogHost, num2);
-		RememberConversationRestoreBounds();
-	}
-
-	private void RememberConversationRestoreBounds()
-	{
-		if (!conversationDialogInitialized || conversationDialogMaximized)
+		if (!conversationDialogInitialized || conversationCanvas.ActualWidth <= 0.0 || conversationCanvas.ActualHeight <= 0.0)
 		{
 			return;
 		}
-		conversationRestoreLeft = DialogLeft();
-		conversationRestoreTop = DialogTop();
-		conversationRestoreWidth = conversationDialogHost.ActualWidth > 0.0 ? conversationDialogHost.ActualWidth : conversationDialogHost.Width;
-		conversationRestoreHeight = conversationDialogHost.ActualHeight > 0.0 ? conversationDialogHost.ActualHeight : conversationDialogHost.Height;
-	}
-
-	private void ScaleConversationRestoreBounds(double widthScale, double heightScale, double canvasWidth, double canvasHeight)
-	{
-		conversationRestoreLeft *= widthScale;
-		conversationRestoreTop *= heightScale;
-		conversationRestoreWidth = Clamp(conversationRestoreWidth * widthScale, conversationDialogHost.MinWidth, Math.Max(conversationDialogHost.MinWidth, canvasWidth - 8.0));
-		conversationRestoreHeight = Clamp(conversationRestoreHeight * heightScale, conversationDialogHost.MinHeight, Math.Max(conversationDialogHost.MinHeight, canvasHeight - 8.0));
-		conversationRestoreLeft = Clamp(conversationRestoreLeft, 4.0, Math.Max(4.0, canvasWidth - conversationRestoreWidth - 4.0));
-		conversationRestoreTop = Clamp(conversationRestoreTop, 4.0, Math.Max(4.0, canvasHeight - conversationRestoreHeight - 4.0));
-	}
-
-	private void EnsureConversationDialogFits()
-	{
-		if (conversationDialogInitialized && !(conversationCanvas.ActualWidth <= 0.0) && !(conversationCanvas.ActualHeight <= 0.0))
-		{
-			if (conversationDialogMaximized)
-			{
-				conversationDialogHost.Width = Math.Max(conversationDialogHost.MinWidth, conversationCanvas.ActualWidth - 36.0);
-				conversationDialogHost.Height = Math.Max(conversationDialogHost.MinHeight, conversationCanvas.ActualHeight - 36.0);
-				Canvas.SetLeft(conversationDialogHost, 18.0);
-				Canvas.SetTop(conversationDialogHost, 18.0);
-			}
-			else
-			{
-				conversationDialogHost.Width = Math.Min(conversationDialogHost.Width, Math.Max(conversationDialogHost.MinWidth, conversationCanvas.ActualWidth - 8.0));
-				conversationDialogHost.Height = Math.Min(conversationDialogHost.Height, Math.Max(conversationDialogHost.MinHeight, conversationCanvas.ActualHeight - 8.0));
-				Canvas.SetLeft(conversationDialogHost, Clamp(DialogLeft(), 4.0, Math.Max(4.0, conversationCanvas.ActualWidth - conversationDialogHost.Width - 4.0)));
-				Canvas.SetTop(conversationDialogHost, Clamp(DialogTop(), 4.0, Math.Max(4.0, conversationCanvas.ActualHeight - conversationDialogHost.Height - 4.0)));
-			}
-		}
-	}
-
-	private void CenterConversationDialog()
-	{
-		Canvas.SetLeft(conversationDialogHost, Math.Max(0.0, (conversationCanvas.ActualWidth - conversationDialogHost.Width) / 2.0));
-		Canvas.SetTop(conversationDialogHost, Math.Max(0.0, (conversationCanvas.ActualHeight - conversationDialogHost.Height) / 2.0));
+		conversationDialogHost.Width = Math.Max(conversationDialogHost.MinWidth, conversationCanvas.ActualWidth - ConversationPreviewInset * 2.0);
+		conversationDialogHost.Height = Math.Max(conversationDialogHost.MinHeight, conversationCanvas.ActualHeight - ConversationPreviewInset * 2.0);
+		Canvas.SetLeft(conversationDialogHost, ConversationPreviewInset);
+		Canvas.SetTop(conversationDialogHost, ConversationPreviewInset);
 	}
 
 	private double DialogLeft()
@@ -1520,15 +1241,6 @@ internal sealed class MainWindowController
 			return top;
 		}
 		return 0.0;
-	}
-
-	private static double Clamp(double value, double minimum, double maximum)
-	{
-		if (maximum < minimum)
-		{
-			maximum = minimum;
-		}
-		return Math.Max(minimum, Math.Min(maximum, value));
 	}
 
 	private void ShowBackupPage()

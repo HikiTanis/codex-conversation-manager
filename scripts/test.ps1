@@ -210,7 +210,8 @@ try {
         [pscustomobject]@{ File = 'render-import-progress-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese import-progress render test' },
         [pscustomobject]@{ File = 'render-preview-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese conversation-preview render test' },
         [pscustomobject]@{ File = 'render-preview-responsive-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese responsive conversation-preview render test' },
-        [pscustomobject]@{ File = 'render-preview-subagent-max-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese maximized subagent-preview render test' },
+        [pscustomobject]@{ File = 'render-preview-main-window-max-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese preview inside maximized main-window render test' },
+        [pscustomobject]@{ File = 'render-preview-subagent-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese subagent-preview render test' },
         [pscustomobject]@{ File = 'render-project-backup-compact-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese compact-window render test' },
         [pscustomobject]@{ File = 'render-import-project-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese import render test' },
         [pscustomobject]@{ File = 'render-import-project-compact-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese compact import render test' },
@@ -225,6 +226,7 @@ try {
         [pscustomobject]@{ File = 'render-import-en-US.png'; Language = 'en-US'; Name = 'English conversation-only import render test' },
         [pscustomobject]@{ File = 'render-preview-en-US.png'; Language = 'en-US'; Name = 'English conversation-preview render test' },
         [pscustomobject]@{ File = 'render-preview-responsive-en-US.png'; Language = 'en-US'; Name = 'English responsive conversation-preview render test' },
+        [pscustomobject]@{ File = 'render-preview-main-window-max-en-US.png'; Language = 'en-US'; Name = 'English preview inside maximized main-window render test' },
         [pscustomobject]@{ File = 'render-import-project-en-US.png'; Language = 'en-US'; Name = 'English import render test' },
         [pscustomobject]@{ File = 'render-dialog-theme-en-US.png'; Language = 'en-US'; Name = 'English dialog-theme render test' },
         [pscustomobject]@{ File = 'render-paginated-completion-en-US.png'; Language = 'en-US'; Name = 'English paginated-completion render test' }
@@ -242,8 +244,10 @@ try {
     $longRenderCases = @(
         [pscustomobject]@{ File = 'render-preview-long-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese complete long-conversation render test' },
         [pscustomobject]@{ File = 'render-preview-long-rail-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese user-message navigation rail render test' },
+        [pscustomobject]@{ File = 'render-preview-long-main-window-max-zh-CN.png'; Language = 'zh-CN'; Name = 'Chinese long preview inside maximized main-window render test' },
         [pscustomobject]@{ File = 'render-preview-long-en-US.png'; Language = 'en-US'; Name = 'English complete long-conversation render test' },
-        [pscustomobject]@{ File = 'render-preview-long-rail-en-US.png'; Language = 'en-US'; Name = 'English user-message navigation rail render test' }
+        [pscustomobject]@{ File = 'render-preview-long-rail-en-US.png'; Language = 'en-US'; Name = 'English user-message navigation rail render test' },
+        [pscustomobject]@{ File = 'render-preview-long-main-window-max-en-US.png'; Language = 'en-US'; Name = 'English long preview inside maximized main-window render test' }
     )
     foreach ($renderCase in $longRenderCases) {
         $renderPath = Join-Path $artifactRoot $renderCase.File
